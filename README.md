@@ -1,41 +1,110 @@
-# FTP/SFTP Sync Watcher
+<p align="center">
+  <img src="media/icon.png" alt="FTP/SFTP Sync Watcher Logo" width="128" height="128">
+</p>
 
-Eine VS Code Extension für automatischen Upload und Synchronisation von Dateien auf FTP/SFTP Server.
+<h1 align="center">FTP/SFTP Sync Watcher</h1>
 
-## Features
+<p align="center">
+  <strong>The most reliable VS Code extension for automatic file synchronization with FTP/SFTP servers</strong>
+</p>
 
-- 🔄 **Automatischer Upload beim Speichern** - Dateien werden automatisch hochgeladen, wenn sie gespeichert werden
-- 👁️ **File Watcher** - Überwacht Dateiänderungen und synchronisiert automatisch
-- 🗑️ **Auto-Delete** - Optionales Löschen von Remote-Dateien, wenn lokale Dateien gelöscht werden
-- 📁 **.gitignore Support** - Respektiert `.gitignore` Regeln
-- 🚫 **Benutzerdefinierte Exclude-Patterns** - Schließe Dateien und Ordner mit Glob-Patterns aus
-- 🔐 **SFTP mit SSH Key Support** - Sichere Verbindung mit Private Key Authentifizierung
-- 📊 **Status Bar Integration** - Zeigt den aktuellen Sync-Status an
-- ⚡ **Robuste Verbindung** - Automatische Wiederverbindung bei Verbindungsabbrüchen
-- 🔁 **Operation Queue** - Verhindert hängende Uploads durch Timeout und Retry-Mechanismen
-- 🏃 **Concurrent Uploads** - Mehrere Dateien gleichzeitig hochladen
+<p align="center">
+  <a href="https://marketplace.visualstudio.com/items?itemName=ThaLoco0ne.ftp-sync-watcher">
+    <img src="https://img.shields.io/visual-studio-marketplace/v/ThaLoco0ne.ftp-sync-watcher?style=flat-square&logo=visual-studio-code&logoColor=white&label=VS%20Code%20Marketplace&color=0078d4" alt="VS Code Marketplace Version">
+  </a>
+  <a href="https://marketplace.visualstudio.com/items?itemName=ThaLoco0ne.ftp-sync-watcher">
+    <img src="https://img.shields.io/visual-studio-marketplace/i/ThaLoco0ne.ftp-sync-watcher?style=flat-square&logo=visual-studio-code&logoColor=white&label=Installs&color=success" alt="VS Code Marketplace Installs">
+  </a>
+  <a href="https://marketplace.visualstudio.com/items?itemName=ThaLoco0ne.ftp-sync-watcher">
+    <img src="https://img.shields.io/visual-studio-marketplace/r/ThaLoco0ne.ftp-sync-watcher?style=flat-square&logo=visual-studio-code&logoColor=white&label=Rating&color=success" alt="VS Code Marketplace Rating">
+  </a>
+  <a href="https://github.com/LiL-Loco/ftp-sync-watcher/blob/main/LICENSE">
+    <img src="https://img.shields.io/github/license/LiL-Loco/ftp-sync-watcher?style=flat-square&color=blue" alt="License">
+  </a>
+</p>
 
-## Warum diese Extension?
+<p align="center">
+  <a href="#-features">Features</a> •
+  <a href="#-installation">Installation</a> •
+  <a href="#%EF%B8%8F-configuration">Configuration</a> •
+  <a href="#-commands">Commands</a> •
+  <a href="#-troubleshooting">Troubleshooting</a>
+</p>
 
-Andere FTP/SFTP Extensions haben oft das Problem, dass sie nach einer Weile **aufhören zu funktionieren** und Dateien nicht mehr hochladen. Diese Extension löst das durch:
+---
 
-- **Automatische Wiederverbindung** mit exponentialem Backoff (bis zu 5 Versuche)
-- **Timeout für jede Operation** - keine hängenden Uploads mehr
-- **Health-Checks** - erkennt Verbindungsprobleme bevor sie zum Problem werden
-- **Operation Queue** - Uploads werden in einer Queue verarbeitet, nicht blockierend
-- **Retry-Mechanismus** - Fehlgeschlagene Uploads werden automatisch wiederholt
+## ✨ Features
 
-## Installation
+| Feature | Description |
+|---------|-------------|
+| 🔄 **Upload on Save** | Automatically upload files when you save them |
+| 👁️ **File Watcher** | Monitor file changes and sync automatically in real-time |
+| 🌳 **Remote Explorer** | Browse and manage remote files directly in VS Code |
+| 🗑️ **Auto-Delete** | Optionally delete remote files when local files are deleted |
+| 📁 **.gitignore Support** | Automatically respects your `.gitignore` rules |
+| 🚫 **Custom Ignore Patterns** | Exclude files and folders with powerful glob patterns |
+| 🔐 **SSH Key Authentication** | Secure SFTP connections with private key support |
+| 📊 **Status Bar Integration** | Real-time sync status at a glance |
+| ⚡ **Smart Reconnection** | Automatic reconnection with exponential backoff |
+| 🔁 **Operation Queue** | Prevents hanging uploads with timeout and retry mechanisms |
+| 🛡️ **Connection Pooling** | Intelligent connection management to avoid server limits |
 
-1. Öffne VS Code
-2. Drücke `Ctrl+P` und gib ein: `ext install ftp-sync-watcher`
-3. Oder installiere manuell mit der VSIX-Datei
+---
 
-## Konfiguration
+## 🚀 Why This Extension?
 
-Erstelle eine `.ftpsync.json` Datei im Root-Verzeichnis deines Projekts:
+Other FTP/SFTP extensions often **stop working** after a while and fail to upload files silently. This extension solves that with:
 
-### SFTP Konfiguration (empfohlen)
+<table>
+<tr>
+<td width="50%">
+
+### 🔧 Robust Architecture
+- **Automatic Reconnection** with exponential backoff (up to 5 retries)
+- **Operation Timeout** — no more hanging uploads
+- **Health Checks** — detects connection issues proactively
+- **Global Connection Limiting** — respects server connection limits
+
+</td>
+<td width="50%">
+
+### ⚡ Smart Queue System
+- **Non-blocking Queue** — uploads are processed in sequence
+- **Retry Mechanism** — failed uploads are retried automatically
+- **Rate Limit Handling** — waits intelligently when server is busy
+- **Priority System** — important operations first
+
+</td>
+</tr>
+</table>
+
+---
+
+## 📦 Installation
+
+### From VS Code Marketplace (Recommended)
+
+1. Open VS Code
+2. Press `Ctrl+P` (or `Cmd+P` on Mac)
+3. Type: `ext install ThaLoco0ne.ftp-sync-watcher`
+4. Press Enter
+
+### Manual Installation
+
+1. Download the `.vsix` file from [Releases](https://github.com/LiL-Loco/ftp-sync-watcher/releases)
+2. In VS Code: `Extensions` → `...` → `Install from VSIX...`
+
+---
+
+## ⚙️ Configuration
+
+Create a `.ftpsync.json` file in your `.vscode` folder. The extension will guide you through this process.
+
+### Quick Start
+
+Press `Ctrl+Shift+P` → `FTP Sync: Create Configuration File`
+
+### SFTP Configuration (Recommended)
 
 ```json
 {
@@ -46,6 +115,7 @@ Erstelle eine `.ftpsync.json` Datei im Root-Verzeichnis deines Projekts:
   "username": "deploy",
   "privateKeyPath": "~/.ssh/id_rsa",
   "remotePath": "/var/www/html",
+  "localPath": "..",
   "uploadOnSave": true,
   "watcher": {
     "enabled": true,
@@ -53,12 +123,16 @@ Erstelle eine `.ftpsync.json` Datei im Root-Verzeichnis deines Projekts:
     "autoUpload": true,
     "autoDelete": false
   },
-  "ignore": [".git", ".vscode", "node_modules", ".ftpsync.json", "*.log"],
+  "ignore": [
+    ".git",
+    ".vscode",
+    "node_modules"
+  ],
   "useGitIgnore": true
 }
 ```
 
-### FTP Konfiguration
+### FTP Configuration
 
 ```json
 {
@@ -74,85 +148,119 @@ Erstelle eine `.ftpsync.json` Datei im Root-Verzeichnis deines Projekts:
 }
 ```
 
-### Konfigurationsoptionen
+### Configuration Reference
 
-| Option               | Typ             | Standard             | Beschreibung                               |
-| -------------------- | --------------- | -------------------- | ------------------------------------------ |
-| `name`               | string          | -                    | Name für dieses Verbindungsprofil          |
-| `protocol`           | "ftp" \| "sftp" | "sftp"               | Verbindungsprotokoll                       |
-| `host`               | string          | **erforderlich**     | Hostname oder IP-Adresse                   |
-| `port`               | number          | 22 (SFTP) / 21 (FTP) | Port-Nummer                                |
-| `username`           | string          | **erforderlich**     | Benutzername                               |
-| `password`           | string          | -                    | Passwort (nicht empfohlen für SFTP)        |
-| `privateKeyPath`     | string          | -                    | Pfad zur SSH Private Key Datei             |
-| `passphrase`         | string          | -                    | Passphrase für verschlüsselten Private Key |
-| `remotePath`         | string          | **erforderlich**     | Remote-Verzeichnispfad                     |
-| `localPath`          | string          | "."                  | Lokales Verzeichnis relativ zum Workspace  |
-| `uploadOnSave`       | boolean         | true                 | Automatisch beim Speichern hochladen       |
-| `watcher.enabled`    | boolean         | true                 | File Watcher aktivieren                    |
-| `watcher.files`      | string \| false | "\*_/_"              | Glob-Pattern für zu überwachende Dateien   |
-| `watcher.autoUpload` | boolean         | true                 | Änderungen automatisch hochladen           |
-| `watcher.autoDelete` | boolean         | false                | Remote-Dateien bei Löschung entfernen      |
-| `ignore`             | string[]        | [...]                | Glob-Patterns zum Ausschließen             |
-| `useGitIgnore`       | boolean         | true                 | .gitignore Regeln anwenden                 |
-| `secure`             | boolean         | false                | FTPS (FTP über TLS) verwenden              |
-| `timeout`            | number          | 30000                | Verbindungs-Timeout in ms                  |
-| `debug`              | boolean         | false                | Debug-Logging aktivieren                   |
+<details>
+<summary><strong>📋 Click to expand full configuration options</strong></summary>
 
-## Commands
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `name` | string | - | Display name for this connection profile |
+| `protocol` | `"ftp"` \| `"sftp"` | `"sftp"` | Connection protocol |
+| `host` | string | **required** | Hostname or IP address |
+| `port` | number | 22 (SFTP) / 21 (FTP) | Port number |
+| `username` | string | **required** | Username for authentication |
+| `password` | string | - | Password (not recommended for SFTP) |
+| `privateKeyPath` | string | - | Path to SSH private key file |
+| `passphrase` | string | - | Passphrase for encrypted private key |
+| `remotePath` | string | **required** | Remote directory path |
+| `localPath` | string | `"."` | Local directory relative to workspace |
+| `uploadOnSave` | boolean | `true` | Auto-upload on file save |
+| `watcher.enabled` | boolean | `true` | Enable file watcher |
+| `watcher.files` | string \| false | `"**/*"` | Glob pattern for watched files |
+| `watcher.autoUpload` | boolean | `true` | Auto-upload changed files |
+| `watcher.autoDelete` | boolean | `false` | Delete remote files when local deleted |
+| `ignore` | string[] | `[...]` | Glob patterns to exclude |
+| `useGitIgnore` | boolean | `true` | Apply .gitignore rules |
+| `secure` | boolean | `false` | Use FTPS (FTP over TLS) |
+| `timeout` | number | `30000` | Connection timeout in ms |
+| `debug` | boolean | `false` | Enable debug logging |
 
-Alle Commands sind über die Command Palette (`Ctrl+Shift+P`) verfügbar:
+</details>
 
-| Command                               | Beschreibung                       |
-| ------------------------------------- | ---------------------------------- |
-| `FTP Sync: Upload Current File`       | Aktuelle Datei hochladen           |
-| `FTP Sync: Upload Folder`             | Ordner hochladen                   |
-| `FTP Sync: Download Current File`     | Aktuelle Datei herunterladen       |
-| `FTP Sync: Start Watcher`             | File Watcher starten               |
-| `FTP Sync: Stop Watcher`              | File Watcher stoppen               |
-| `FTP Sync: Toggle Watcher`            | File Watcher ein-/ausschalten      |
-| `FTP Sync: Create Configuration File` | Neue Konfigurationsdatei erstellen |
-| `FTP Sync: Show Output Channel`       | Ausgabekanal anzeigen              |
+---
 
-## Kontextmenü
+## 🎮 Commands
 
-Rechtsklick auf Dateien/Ordner im Explorer:
+Access all commands via the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`):
 
-- **Upload File/Folder** - Hochladen
-- **Download File/Folder** - Herunterladen
+| Command | Description |
+|---------|-------------|
+| `FTP Sync: Upload Current File` | Upload the active file |
+| `FTP Sync: Upload Folder` | Upload an entire folder |
+| `FTP Sync: Download Current File` | Download the active file |
+| `FTP Sync: Start Watcher` | Start the file watcher |
+| `FTP Sync: Stop Watcher` | Stop the file watcher |
+| `FTP Sync: Toggle Watcher` | Toggle watcher on/off |
+| `FTP Sync: Connect to Server` | Connect to remote server |
+| `FTP Sync: Disconnect` | Disconnect from server |
+| `FTP Sync: Create Configuration File` | Create a new config file |
+| `FTP Sync: Show Output Channel` | Show logs |
 
-## Status Bar
+---
 
-Die Status Bar zeigt den aktuellen Zustand an:
+## 📂 Remote Explorer
 
-- ☁️ **FTP Sync** - Watcher inaktiv (klicken zum Starten)
-- 👁️ **Watching** - Watcher aktiv (klicken zum Stoppen)
-- 🔄 **Syncing...** - Upload läuft
-- ❌ **Error** - Fehler aufgetreten (Output für Details prüfen)
+Browse and manage your remote files directly in VS Code:
 
-## Glob-Patterns für Ignore
+<table>
+<tr>
+<td>
 
-Beispiele für Exclude-Patterns:
+### Features
+- 🌳 **Tree View** — Navigate your remote file structure
+- 📥 **Download** — Download files with one click
+- 🗑️ **Delete** — Remove remote files
+- 🔄 **Refresh** — Update the file list
+
+</td>
+<td>
+
+### Access
+1. Click the **FTP Sync** icon in the Activity Bar
+2. Click **Connect** to connect to your server
+3. Browse and manage your files!
+
+</td>
+</tr>
+</table>
+
+---
+
+## 📊 Status Bar
+
+The status bar shows the current state:
+
+| Icon | Status | Description |
+|------|--------|-------------|
+| ☁️ | **FTP Sync** | Watcher inactive — click to start |
+| 👁️ | **Watching** | Watcher active — click to stop |
+| 🔄 | **Syncing...** | Upload in progress |
+| ❌ | **Error** | Error occurred — check output for details |
+
+---
+
+## 🎯 Glob Patterns
+
+### Ignore Patterns
 
 ```json
 {
   "ignore": [
-    ".git", // .git Ordner
-    ".vscode", // .vscode Ordner
-    "node_modules", // node_modules Ordner
-    "*.log", // Alle .log Dateien
-    "**/*.map", // Alle .map Dateien in allen Ordnern
-    "dist/**", // Alles im dist Ordner
-    "!dist/index.html", // Außer dist/index.html
-    "temp*", // Alle Dateien/Ordner die mit temp beginnen
-    "**/.DS_Store" // Alle .DS_Store Dateien
+    ".git",           // Ignore .git folder
+    ".vscode",        // Ignore .vscode folder
+    "node_modules",   // Ignore node_modules
+    "*.log",          // Ignore all .log files
+    "**/*.map",       // Ignore all .map files in any folder
+    "dist/**",        // Ignore everything in dist folder
+    "!dist/index.html", // Except dist/index.html
+    "temp*",          // Ignore files/folders starting with temp
+    "**/.DS_Store"    // Ignore all .DS_Store files
   ]
 }
 ```
 
-## Watcher-Patterns
-
-Beispiele für Watch-Patterns:
+### Watch Patterns
 
 ```json
 {
@@ -164,47 +272,98 @@ Beispiele für Watch-Patterns:
 }
 ```
 
-| Pattern         | Beschreibung                  |
-| --------------- | ----------------------------- |
-| `**/*`          | Alle Dateien in allen Ordnern |
-| `src/**`        | Alle Dateien im src Ordner    |
-| `*.js`          | Alle JS-Dateien im Root       |
-| `**/*.{js,ts}`  | Alle JS und TS Dateien        |
-| `!**/*.test.js` | Ausschließen von Test-Dateien |
+| Pattern | Description |
+|---------|-------------|
+| `**/*` | All files in all folders |
+| `src/**` | All files in src folder |
+| `*.js` | All JS files in root |
+| `**/*.{js,ts}` | All JS and TS files |
 
-## Sicherheitshinweise
+---
 
-⚠️ **Wichtig:**
+## 🔒 Security Best Practices
 
-- Speichere keine Passwörter in der `.ftpsync.json` - verwende SSH Keys für SFTP
-- Füge `.ftpsync.json` zu `.gitignore` hinzu, wenn sensible Daten enthalten sind
-- Verwende `privateKeyPath` anstelle von `password` für SFTP-Verbindungen
+> ⚠️ **Important Security Recommendations**
 
-## Problembehandlung
+1. **Use SSH Keys** — Prefer `privateKeyPath` over `password` for SFTP
+2. **Protect Config Files** — Add `.ftpsync.json` to `.gitignore` if it contains sensitive data
+3. **Use Environment Variables** — Consider using passphrase-protected keys
+4. **Limit Permissions** — Use the minimum required server permissions
 
-### Verbindungsprobleme
+---
 
-1. Überprüfe Host, Port und Zugangsdaten
-2. Stelle sicher, dass der Server erreichbar ist
-3. Aktiviere `"debug": true` für detaillierte Logs
-4. Prüfe den Output Channel (`FTP Sync: Show Output Channel`)
+## 🔧 Troubleshooting
 
-### Dateien werden nicht hochgeladen
+<details>
+<summary><strong>🔌 Connection Issues</strong></summary>
 
-1. Prüfe die `ignore` Patterns
-2. Stelle sicher, dass `uploadOnSave` aktiviert ist
-3. Prüfe, ob die Datei von `.gitignore` ausgeschlossen wird
+1. Verify host, port, and credentials
+2. Ensure the server is reachable
+3. Enable `"debug": true` for detailed logs
+4. Check the Output Channel: `FTP Sync: Show Output Channel`
+5. For FTP: Try enabling `"secure": true` for FTPS
 
-### SSH Key Probleme
+</details>
 
-1. Stelle sicher, dass der Key im OpenSSH Format ist
-2. Prüfe die Dateiberechtigungen des Private Keys
-3. Bei verschlüsselten Keys: `passphrase` angeben
+<details>
+<summary><strong>📤 Files Not Uploading</strong></summary>
 
-## Lizenz
+1. Check the `ignore` patterns
+2. Ensure `uploadOnSave` is enabled
+3. Verify the file isn't excluded by `.gitignore`
+4. Check the Output Channel for errors
 
-MIT License
+</details>
 
-## Beitragen
+<details>
+<summary><strong>🔐 SSH Key Issues</strong></summary>
 
-Contributions sind willkommen! Bitte erstelle einen Pull Request oder melde Issues auf GitHub.
+1. Ensure the key is in OpenSSH format
+2. Check file permissions of the private key
+3. For encrypted keys: provide the `passphrase`
+4. Try converting the key: `ssh-keygen -p -m PEM -f ~/.ssh/id_rsa`
+
+</details>
+
+<details>
+<summary><strong>⚠️ Max Connections Error (530)</strong></summary>
+
+This extension handles this automatically by:
+1. Limiting concurrent connections (max 2)
+2. Waiting 60 seconds when server rejects connections
+3. Queuing operations and processing sequentially
+
+If you still see this error, wait a few minutes for old connections to close.
+
+</details>
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit a [Pull Request](https://github.com/LiL-Loco/ftp-sync-watcher/pulls).
+
+### Found a Bug?
+
+Please [open an issue](https://github.com/LiL-Loco/ftp-sync-watcher/issues/new) with:
+- Your VS Code version
+- Extension version
+- Steps to reproduce
+- Error messages from the Output Channel
+
+---
+
+## 📄 License
+
+This project is licensed under the [MIT License](LICENSE).
+
+---
+
+<p align="center">
+  Made with ❤️ by <a href="https://github.com/LiL-Loco">LiL-Loco</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/LiL-Loco/ftp-sync-watcher/issues">Report Bug</a> •
+  <a href="https://github.com/LiL-Loco/ftp-sync-watcher/issues">Request Feature</a>
+</p>
