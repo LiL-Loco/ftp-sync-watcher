@@ -1,0 +1,151 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "FTP Sync Configuration",
+    "description": "Configuration file for FTP/SFTP Sync Watcher",
+    "type": "object",
+    "required": [
+        "host",
+        "username",
+        "remotePath"
+    ],
+    "properties": {
+        "name": {
+            "type": "string",
+            "description": "Name for this connection profile"
+        },
+        "protocol": {
+            "type": "string",
+            "enum": [
+                "ftp",
+                "sftp"
+            ],
+            "default": "sftp",
+            "description": "Protocol to use for connection"
+        },
+        "host": {
+            "type": "string",
+            "description": "Hostname or IP address of the server"
+        },
+        "port": {
+            "type": "integer",
+            "description": "Port number (default: 21 for FTP, 22 for SFTP)"
+        },
+        "username": {
+            "type": "string",
+            "description": "Username for authentication"
+        },
+        "password": {
+            "type": "string",
+            "description": "Password for authentication (not recommended, use privateKeyPath instead)"
+        },
+        "privateKeyPath": {
+            "type": "string",
+            "description": "Path to private key file for SFTP authentication"
+        },
+        "passphrase": {
+            "type": "string",
+            "description": "Passphrase for encrypted private key"
+        },
+        "remotePath": {
+            "type": "string",
+            "description": "Remote directory path to sync with"
+        },
+        "localPath": {
+            "type": "string",
+            "default": ".",
+            "description": "Local directory path relative to workspace (default: workspace root)"
+        },
+        "uploadOnSave": {
+            "type": "boolean",
+            "default": true,
+            "description": "Automatically upload files when saved"
+        },
+        "watcher": {
+            "type": "object",
+            "description": "File watcher configuration",
+            "properties": {
+                "enabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Enable file watcher"
+                },
+                "files": {
+                    "oneOf": [
+                        {
+                            "type": "string",
+                            "description": "Glob pattern for files to watch"
+                        },
+                        {
+                            "type": "boolean",
+                            "const": false,
+                            "description": "Disable file watching"
+                        }
+                    ],
+                    "default": "**/*",
+                    "description": "Glob pattern for files to watch or false to disable"
+                },
+                "autoUpload": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Automatically upload changed files"
+                },
+                "autoDelete": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Automatically delete remote files when local files are deleted"
+                }
+            }
+        },
+        "ignore": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "default": [
+                ".git",
+                ".vscode",
+                "node_modules",
+                ".ftpsync.json"
+            ],
+            "description": "Glob patterns for files/folders to ignore"
+        },
+        "useGitIgnore": {
+            "type": "boolean",
+            "default": true,
+            "description": "Apply .gitignore rules when syncing"
+        },
+        "secure": {
+            "type": "boolean",
+            "default": false,
+            "description": "Use FTPS (FTP over TLS) for FTP connections"
+        },
+        "secureOptions": {
+            "type": "object",
+            "description": "TLS options for secure connections",
+            "properties": {
+                "rejectUnauthorized": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Reject unauthorized certificates"
+                }
+            }
+        },
+        "timeout": {
+            "type": "integer",
+            "default": 30000,
+            "description": "Connection timeout in milliseconds"
+        },
+        "concurrency": {
+            "type": "integer",
+            "default": 3,
+            "minimum": 1,
+            "maximum": 10,
+            "description": "Number of concurrent file transfers"
+        },
+        "debug": {
+            "type": "boolean",
+            "default": false,
+            "description": "Enable debug logging"
+        }
+    }
+}

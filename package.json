@@ -1,0 +1,261 @@
+{
+  "name": "ftp-sync-watcher",
+  "displayName": "FTP/SFTP Sync Watcher",
+  "description": "Automatischer Upload und Sync von Dateien auf FTP/SFTP Server mit File Watcher, .gitignore Support und Exclude-Patterns",
+  "version": "1.1.0",
+  "publisher": "ThaLoco0ne",
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#1e1e1e",
+    "theme": "dark"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ThaLoco0ne/ftp-sync-watcher"
+  },
+  "bugs": {
+    "url": "https://github.com/ThaLoco0ne/ftp-sync-watcher/issues"
+  },
+  "homepage": "https://github.com/ThaLoco0ne/ftp-sync-watcher#readme",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "ftp",
+    "sftp",
+    "sync",
+    "upload",
+    "watcher",
+    "remote"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "ftpExplorer",
+          "title": "FTP Sync",
+          "icon": "media/ftp-sync.svg"
+        }
+      ]
+    },
+    "views": {
+      "ftpExplorer": [
+        {
+          "id": "ftpExplorerView",
+          "name": "Remote Files",
+          "contextualTitle": "FTP Explorer"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "ftpSync.uploadFile",
+        "title": "FTP Sync: Upload Current File",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "ftpSync.uploadFolder",
+        "title": "FTP Sync: Upload Folder",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "ftpSync.downloadFile",
+        "title": "FTP Sync: Download Current File",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "ftpSync.downloadFolder",
+        "title": "FTP Sync: Download Folder",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "ftpSync.startWatcher",
+        "title": "FTP Sync: Start Watcher",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "ftpSync.stopWatcher",
+        "title": "FTP Sync: Stop Watcher",
+        "icon": "$(eye-closed)"
+      },
+      {
+        "command": "ftpSync.toggleWatcher",
+        "title": "FTP Sync: Toggle Watcher"
+      },
+      {
+        "command": "ftpSync.createConfig",
+        "title": "FTP Sync: Create Configuration File",
+        "icon": "$(new-file)"
+      },
+      {
+        "command": "ftpSync.showOutput",
+        "title": "FTP Sync: Show Output Channel"
+      },
+      {
+        "command": "ftpSync.connect",
+        "title": "FTP Sync: Connect to Server",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "ftpSync.disconnect",
+        "title": "FTP Sync: Disconnect from Server",
+        "icon": "$(debug-disconnect)"
+      },
+      {
+        "command": "ftpSync.refreshExplorer",
+        "title": "FTP Sync: Refresh Remote Files",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "ftpSync.navigateUp",
+        "title": "FTP Sync: Go to Parent Directory",
+        "icon": "$(arrow-up)"
+      },
+      {
+        "command": "ftpSync.downloadRemoteFile",
+        "title": "Download",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "ftpSync.deleteRemoteFile",
+        "title": "Delete",
+        "icon": "$(trash)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "ftpSync.connect",
+          "when": "view == ftpExplorerView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "ftpSync.disconnect",
+          "when": "view == ftpExplorerView",
+          "group": "navigation@2"
+        },
+        {
+          "command": "ftpSync.refreshExplorer",
+          "when": "view == ftpExplorerView",
+          "group": "navigation@3"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "ftpSync.downloadRemoteFile",
+          "when": "view == ftpExplorerView && viewItem =~ /ftpFile|ftpFolder/",
+          "group": "inline@1"
+        },
+        {
+          "command": "ftpSync.deleteRemoteFile",
+          "when": "view == ftpExplorerView && viewItem =~ /ftpFile|ftpFolder/",
+          "group": "inline@2"
+        },
+        {
+          "command": "ftpSync.downloadRemoteFile",
+          "when": "view == ftpExplorerView && viewItem =~ /ftpFile|ftpFolder/",
+          "group": "ftpSync@1"
+        },
+        {
+          "command": "ftpSync.deleteRemoteFile",
+          "when": "view == ftpExplorerView && viewItem =~ /ftpFile|ftpFolder/",
+          "group": "ftpSync@2"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "ftpSync.uploadFile",
+          "when": "!explorerResourceIsFolder",
+          "group": "ftpsync@1"
+        },
+        {
+          "command": "ftpSync.uploadFolder",
+          "when": "explorerResourceIsFolder",
+          "group": "ftpsync@1"
+        },
+        {
+          "command": "ftpSync.downloadFile",
+          "when": "!explorerResourceIsFolder",
+          "group": "ftpsync@2"
+        },
+        {
+          "command": "ftpSync.downloadFolder",
+          "when": "explorerResourceIsFolder",
+          "group": "ftpsync@2"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "ftpExplorerView",
+        "contents": "No FTP/SFTP configuration found.\n[Create Configuration](command:ftpSync.createConfig)\nThis will create a .ftpsync.json file in your .vscode folder.",
+        "when": "!ftpSync.hasConfig"
+      }
+    ],
+    "configuration": {
+      "title": "FTP Sync Watcher",
+      "properties": {
+        "ftpSync.showStatusBarItem": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show status bar item"
+        },
+        "ftpSync.autoStartWatcher": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically start file watcher when workspace is opened"
+        },
+        "ftpSync.confirmDelete": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show confirmation before deleting remote files"
+        }
+      }
+    },
+    "jsonValidation": [
+      {
+        "fileMatch": "**/.vscode/.ftpsync.json",
+        "url": "./schemas/ftpsync.schema.json"
+      },
+      {
+        "fileMatch": ".vscode/.ftpsync.json",
+        "url": "./schemas/ftpsync.schema.json"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.6",
+    "@types/node": "18.x",
+    "@types/ssh2": "^1.11.19",
+    "@types/ssh2-sftp-client": "^9.0.6",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^6.15.0",
+    "@typescript-eslint/parser": "^6.15.0",
+    "@vscode/test-cli": "^0.0.4",
+    "@vscode/test-electron": "^2.3.8",
+    "eslint": "^8.56.0",
+    "sharp": "^0.34.5",
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "basic-ftp": "^5.0.4",
+    "ignore": "^5.3.0",
+    "ssh2": "^1.15.0",
+    "ssh2-sftp-client": "^9.1.0"
+  }
+}

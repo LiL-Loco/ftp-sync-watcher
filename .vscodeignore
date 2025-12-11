@@ -1,0 +1,43 @@
+.vscode/**
+.vscode-test/**
+src/**
+scripts/**
+.gitignore
+.yarnrc
+vsc-extension-quickstart.md
+**/tsconfig.json
+**/.eslintrc.json
+**/*.map
+**/*.ts
+
+# Exclude all node_modules, then include only what we need
+node_modules/**
+
+# Runtime dependencies
+!node_modules/basic-ftp/**
+!node_modules/ignore/**
+
+# ssh2 and all its dependencies
+!node_modules/ssh2/**
+!node_modules/ssh2-sftp-client/**
+!node_modules/asn1/**
+!node_modules/bcrypt-pbkdf/**
+!node_modules/tweetnacl/**
+!node_modules/safer-buffer/**
+!node_modules/cpu-features/**
+
+# ssh2-sftp-client dependencies
+!node_modules/concat-stream/**
+!node_modules/buffer-from/**
+!node_modules/inherits/**
+!node_modules/typedarray/**
+!node_modules/readable-stream/**
+!node_modules/core-util-is/**
+!node_modules/isarray/**
+!node_modules/process-nextick-args/**
+!node_modules/safe-buffer/**
+!node_modules/string_decoder/**
+!node_modules/util-deprecate/**
+!node_modules/promise-retry/**
+!node_modules/err-code/**
+!node_modules/retry/**
