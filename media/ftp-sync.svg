@@ -1,7 +1,7 @@
-<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <!-- Cloud shape -->
-  <path fill-rule="evenodd" clip-rule="evenodd" d="M6.5 11C6.5 8.51472 8.51472 6.5 11 6.5C12.8899 6.5 14.5108 7.66906 15.1731 9.32051C15.4436 9.27155 15.7217 9.24609 16.0056 9.24609C18.4898 9.24609 20.5056 11.2619 20.5056 13.7461C20.5056 16.2303 18.4898 18.2461 16.0056 18.2461H7C4.51472 18.2461 2.5 16.2314 2.5 13.7461C2.5 11.4767 4.18039 9.60157 6.36251 9.29557C6.41721 9.85091 6.5 10.4194 6.5 11Z" fill="currentColor"/>
+<svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Cloud outline -->
+  <path d="M6.5 19C3.46243 19 1 16.5376 1 13.5C1 10.9571 2.72243 8.82766 5.05 8.20001C5.28812 5.26191 7.77482 3 10.8 3C13.3687 3 15.5532 4.63238 16.3268 6.91752C16.6509 6.84036 16.9879 6.8 17.3333 6.8C19.9116 6.8 22 8.88838 22 11.4667C22 13.2807 20.9567 14.8553 19.4333 15.6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
   <!-- Upload arrow -->
-  <path d="M12 10L12 16" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-  <path d="M9 13L12 10L15 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M12 11V21" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+  <path d="M8 15L12 11L16 15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>
