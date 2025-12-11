@@ -59,7 +59,28 @@ export class SftpClientWrapper extends RemoteClient {
             this.connected = false;
             Logger.info('Disconnected from SFTP server');
         } catch (error) {
+            this.connected = false;
             Logger.error(`Error disconnecting from SFTP server: ${(error as Error).message}`);
+        }
+    }
+
+    /**
+     * Check if connected - override to check actual client state
+     */
+    isConnected(): boolean {
+        if (!this.connected) {
+            return false;
+        }
+        // Try a simple check - if client throws, we're not connected
+        try {
+            // Cast to any to access internal properties safely
+            const client = this.client as unknown as { client?: { _sock?: { readable?: boolean } } };
+            if (client.client && client.client._sock) {
+                return client.client._sock.readable === true;
+            }
+            return this.connected;
+        } catch {
+            return false;
         }
     }
 

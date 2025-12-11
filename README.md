@@ -35,19 +35,19 @@
 
 ## ✨ Features
 
-| Feature | Description |
-|---------|-------------|
-| 🔄 **Upload on Save** | Automatically upload files when you save them |
-| 👁️ **File Watcher** | Monitor file changes and sync automatically in real-time |
-| 🌳 **Remote Explorer** | Browse and manage remote files directly in VS Code |
-| 🗑️ **Auto-Delete** | Optionally delete remote files when local files are deleted |
-| 📁 **.gitignore Support** | Automatically respects your `.gitignore` rules |
-| 🚫 **Custom Ignore Patterns** | Exclude files and folders with powerful glob patterns |
-| 🔐 **SSH Key Authentication** | Secure SFTP connections with private key support |
-| 📊 **Status Bar Integration** | Real-time sync status at a glance |
-| ⚡ **Smart Reconnection** | Automatic reconnection with exponential backoff |
-| 🔁 **Operation Queue** | Prevents hanging uploads with timeout and retry mechanisms |
-| 🛡️ **Connection Pooling** | Intelligent connection management to avoid server limits |
+| Feature                       | Description                                                 |
+| ----------------------------- | ----------------------------------------------------------- |
+| 🔄 **Upload on Save**         | Automatically upload files when you save them               |
+| 👁️ **File Watcher**           | Monitor file changes and sync automatically in real-time    |
+| 🌳 **Remote Explorer**        | Browse and manage remote files directly in VS Code          |
+| 🗑️ **Auto-Delete**            | Optionally delete remote files when local files are deleted |
+| 📁 **.gitignore Support**     | Automatically respects your `.gitignore` rules              |
+| 🚫 **Custom Ignore Patterns** | Exclude files and folders with powerful glob patterns       |
+| 🔐 **SSH Key Authentication** | Secure SFTP connections with private key support            |
+| 📊 **Status Bar Integration** | Real-time sync status at a glance                           |
+| ⚡ **Smart Reconnection**     | Automatic reconnection with exponential backoff             |
+| 🔁 **Operation Queue**        | Prevents hanging uploads with timeout and retry mechanisms  |
+| 🛡️ **Connection Pooling**     | Intelligent connection management to avoid server limits    |
 
 ---
 
@@ -60,6 +60,7 @@ Other FTP/SFTP extensions often **stop working** after a while and fail to uploa
 <td width="50%">
 
 ### 🔧 Robust Architecture
+
 - **Automatic Reconnection** with exponential backoff (up to 5 retries)
 - **Operation Timeout** — no more hanging uploads
 - **Health Checks** — detects connection issues proactively
@@ -69,6 +70,7 @@ Other FTP/SFTP extensions often **stop working** after a while and fail to uploa
 <td width="50%">
 
 ### ⚡ Smart Queue System
+
 - **Non-blocking Queue** — uploads are processed in sequence
 - **Retry Mechanism** — failed uploads are retried automatically
 - **Rate Limit Handling** — waits intelligently when server is busy
@@ -123,11 +125,7 @@ Press `Ctrl+Shift+P` → `FTP Sync: Create Configuration File`
     "autoUpload": true,
     "autoDelete": false
   },
-  "ignore": [
-    ".git",
-    ".vscode",
-    "node_modules"
-  ],
+  "ignore": [".git", ".vscode", "node_modules"],
   "useGitIgnore": true
 }
 ```
@@ -153,28 +151,28 @@ Press `Ctrl+Shift+P` → `FTP Sync: Create Configuration File`
 <details>
 <summary><strong>📋 Click to expand full configuration options</strong></summary>
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `name` | string | - | Display name for this connection profile |
-| `protocol` | `"ftp"` \| `"sftp"` | `"sftp"` | Connection protocol |
-| `host` | string | **required** | Hostname or IP address |
-| `port` | number | 22 (SFTP) / 21 (FTP) | Port number |
-| `username` | string | **required** | Username for authentication |
-| `password` | string | - | Password (not recommended for SFTP) |
-| `privateKeyPath` | string | - | Path to SSH private key file |
-| `passphrase` | string | - | Passphrase for encrypted private key |
-| `remotePath` | string | **required** | Remote directory path |
-| `localPath` | string | `"."` | Local directory relative to workspace |
-| `uploadOnSave` | boolean | `true` | Auto-upload on file save |
-| `watcher.enabled` | boolean | `true` | Enable file watcher |
-| `watcher.files` | string \| false | `"**/*"` | Glob pattern for watched files |
-| `watcher.autoUpload` | boolean | `true` | Auto-upload changed files |
-| `watcher.autoDelete` | boolean | `false` | Delete remote files when local deleted |
-| `ignore` | string[] | `[...]` | Glob patterns to exclude |
-| `useGitIgnore` | boolean | `true` | Apply .gitignore rules |
-| `secure` | boolean | `false` | Use FTPS (FTP over TLS) |
-| `timeout` | number | `30000` | Connection timeout in ms |
-| `debug` | boolean | `false` | Enable debug logging |
+| Option               | Type                | Default              | Description                              |
+| -------------------- | ------------------- | -------------------- | ---------------------------------------- |
+| `name`               | string              | -                    | Display name for this connection profile |
+| `protocol`           | `"ftp"` \| `"sftp"` | `"sftp"`             | Connection protocol                      |
+| `host`               | string              | **required**         | Hostname or IP address                   |
+| `port`               | number              | 22 (SFTP) / 21 (FTP) | Port number                              |
+| `username`           | string              | **required**         | Username for authentication              |
+| `password`           | string              | -                    | Password (not recommended for SFTP)      |
+| `privateKeyPath`     | string              | -                    | Path to SSH private key file             |
+| `passphrase`         | string              | -                    | Passphrase for encrypted private key     |
+| `remotePath`         | string              | **required**         | Remote directory path                    |
+| `localPath`          | string              | `"."`                | Local directory relative to workspace    |
+| `uploadOnSave`       | boolean             | `true`               | Auto-upload on file save                 |
+| `watcher.enabled`    | boolean             | `true`               | Enable file watcher                      |
+| `watcher.files`      | string \| false     | `"**/*"`             | Glob pattern for watched files           |
+| `watcher.autoUpload` | boolean             | `true`               | Auto-upload changed files                |
+| `watcher.autoDelete` | boolean             | `false`              | Delete remote files when local deleted   |
+| `ignore`             | string[]            | `[...]`              | Glob patterns to exclude                 |
+| `useGitIgnore`       | boolean             | `true`               | Apply .gitignore rules                   |
+| `secure`             | boolean             | `false`              | Use FTPS (FTP over TLS)                  |
+| `timeout`            | number              | `30000`              | Connection timeout in ms                 |
+| `debug`              | boolean             | `false`              | Enable debug logging                     |
 
 </details>
 
@@ -184,18 +182,18 @@ Press `Ctrl+Shift+P` → `FTP Sync: Create Configuration File`
 
 Access all commands via the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`):
 
-| Command | Description |
-|---------|-------------|
-| `FTP Sync: Upload Current File` | Upload the active file |
-| `FTP Sync: Upload Folder` | Upload an entire folder |
-| `FTP Sync: Download Current File` | Download the active file |
-| `FTP Sync: Start Watcher` | Start the file watcher |
-| `FTP Sync: Stop Watcher` | Stop the file watcher |
-| `FTP Sync: Toggle Watcher` | Toggle watcher on/off |
-| `FTP Sync: Connect to Server` | Connect to remote server |
-| `FTP Sync: Disconnect` | Disconnect from server |
+| Command                               | Description              |
+| ------------------------------------- | ------------------------ |
+| `FTP Sync: Upload Current File`       | Upload the active file   |
+| `FTP Sync: Upload Folder`             | Upload an entire folder  |
+| `FTP Sync: Download Current File`     | Download the active file |
+| `FTP Sync: Start Watcher`             | Start the file watcher   |
+| `FTP Sync: Stop Watcher`              | Stop the file watcher    |
+| `FTP Sync: Toggle Watcher`            | Toggle watcher on/off    |
+| `FTP Sync: Connect to Server`         | Connect to remote server |
+| `FTP Sync: Disconnect`                | Disconnect from server   |
 | `FTP Sync: Create Configuration File` | Create a new config file |
-| `FTP Sync: Show Output Channel` | Show logs |
+| `FTP Sync: Show Output Channel`       | Show logs                |
 
 ---
 
@@ -208,6 +206,7 @@ Browse and manage your remote files directly in VS Code:
 <td>
 
 ### Features
+
 - 🌳 **Tree View** — Navigate your remote file structure
 - 📥 **Download** — Download files with one click
 - 🗑️ **Delete** — Remove remote files
@@ -217,6 +216,7 @@ Browse and manage your remote files directly in VS Code:
 <td>
 
 ### Access
+
 1. Click the **FTP Sync** icon in the Activity Bar
 2. Click **Connect** to connect to your server
 3. Browse and manage your files!
@@ -231,12 +231,12 @@ Browse and manage your remote files directly in VS Code:
 
 The status bar shows the current state:
 
-| Icon | Status | Description |
-|------|--------|-------------|
-| ☁️ | **FTP Sync** | Watcher inactive — click to start |
-| 👁️ | **Watching** | Watcher active — click to stop |
-| 🔄 | **Syncing...** | Upload in progress |
-| ❌ | **Error** | Error occurred — check output for details |
+| Icon | Status         | Description                               |
+| ---- | -------------- | ----------------------------------------- |
+| ☁️   | **FTP Sync**   | Watcher inactive — click to start         |
+| 👁️   | **Watching**   | Watcher active — click to stop            |
+| 🔄   | **Syncing...** | Upload in progress                        |
+| ❌   | **Error**      | Error occurred — check output for details |
 
 ---
 
@@ -247,15 +247,15 @@ The status bar shows the current state:
 ```json
 {
   "ignore": [
-    ".git",           // Ignore .git folder
-    ".vscode",        // Ignore .vscode folder
-    "node_modules",   // Ignore node_modules
-    "*.log",          // Ignore all .log files
-    "**/*.map",       // Ignore all .map files in any folder
-    "dist/**",        // Ignore everything in dist folder
+    ".git", // Ignore .git folder
+    ".vscode", // Ignore .vscode folder
+    "node_modules", // Ignore node_modules
+    "*.log", // Ignore all .log files
+    "**/*.map", // Ignore all .map files in any folder
+    "dist/**", // Ignore everything in dist folder
     "!dist/index.html", // Except dist/index.html
-    "temp*",          // Ignore files/folders starting with temp
-    "**/.DS_Store"    // Ignore all .DS_Store files
+    "temp*", // Ignore files/folders starting with temp
+    "**/.DS_Store" // Ignore all .DS_Store files
   ]
 }
 ```
@@ -272,12 +272,12 @@ The status bar shows the current state:
 }
 ```
 
-| Pattern | Description |
-|---------|-------------|
-| `**/*` | All files in all folders |
-| `src/**` | All files in src folder |
-| `*.js` | All JS files in root |
-| `**/*.{js,ts}` | All JS and TS files |
+| Pattern        | Description              |
+| -------------- | ------------------------ |
+| `**/*`         | All files in all folders |
+| `src/**`       | All files in src folder  |
+| `*.js`         | All JS files in root     |
+| `**/*.{js,ts}` | All JS and TS files      |
 
 ---
 
@@ -329,6 +329,7 @@ The status bar shows the current state:
 <summary><strong>⚠️ Max Connections Error (530)</strong></summary>
 
 This extension handles this automatically by:
+
 1. Limiting concurrent connections (max 2)
 2. Waiting 60 seconds when server rejects connections
 3. Queuing operations and processing sequentially
@@ -346,6 +347,7 @@ Contributions are welcome! Please feel free to submit a [Pull Request](https://g
 ### Found a Bug?
 
 Please [open an issue](https://github.com/LiL-Loco/ftp-sync-watcher/issues/new) with:
+
 - Your VS Code version
 - Extension version
 - Steps to reproduce

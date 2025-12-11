@@ -155,10 +155,22 @@ export class ConnectionPool {
      * Get a healthy connection, reconnecting if necessary
      */
     public async getConnection(): Promise<RemoteClient> {
-        // If we have a healthy connection, return it
+        // Check if client is actually connected (not just marked as healthy)
         if (this.client && this.health === 'healthy') {
-            this.lastActivity = Date.now();
-            return this.client;
+            // Verify the client is actually still connected
+            if (this.client.isConnected()) {
+                this.lastActivity = Date.now();
+                return this.client;
+            } else {
+                // Client reports disconnected, reset state
+                Logger.debug('Client reports disconnected, reconnecting...');
+                this.health = 'disconnected';
+                this.client = null;
+                if (this.hasSlot) {
+                    globalConnectionManager.releaseSlot();
+                    this.hasSlot = false;
+                }
+            }
         }
 
         // If currently reconnecting, wait for it
@@ -394,7 +406,10 @@ export class ConnectionPool {
             'closed',
             'ended',
             'disconnected',
-            '530' // Max connections error
+            '530', // Max connections error
+            'user closed', // User closed client error
+            'transfer strategies', // Transfer strategies error
+            'client is closed' // Client is closed error
         ];
 
         const message = error.message.toLowerCase();

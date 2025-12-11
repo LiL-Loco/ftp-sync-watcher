@@ -48,7 +48,24 @@ export class FtpClient extends RemoteClient {
             this.connected = false;
             Logger.info('Disconnected from FTP server');
         } catch (error) {
+            this.connected = false;
             Logger.error(`Error disconnecting from FTP server: ${(error as Error).message}`);
+        }
+    }
+
+    /**
+     * Check if connected - override to check actual client state
+     */
+    isConnected(): boolean {
+        // Check both our flag and the actual client state
+        if (!this.connected) {
+            return false;
+        }
+        // basic-ftp client has a 'closed' property
+        try {
+            return !this.client.closed;
+        } catch {
+            return false;
         }
     }
 

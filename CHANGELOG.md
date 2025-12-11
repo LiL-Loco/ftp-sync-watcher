@@ -5,6 +5,24 @@ Alle wichtigen Änderungen an diesem Projekt werden in dieser Datei dokumentiert
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt verwendet [Semantic Versioning](https://semver.org/lang/de/).
 
+## [1.1.1] - 2025-12-11
+
+### 🔧 Behoben
+
+- **"Client is closed" Error**: Verbesserte Erkennung von geschlossenen Verbindungen
+  - `isConnected()` prüft jetzt den tatsächlichen Client-Status
+  - Automatische Reconnection wenn Client extern geschlossen wurde
+- **"Transfer strategies" Error**: Wird jetzt als Connection-Error erkannt und löst Reconnect aus
+- **FTP Client Status**: `closed` Property wird jetzt korrekt geprüft
+- **SFTP Client Status**: Socket-Status wird jetzt korrekt geprüft
+
+## [1.1.0] - 2025-12-11
+
+### ✨ Hinzugefügt
+
+- **Professional English README**: Komplett überarbeitete Dokumentation mit Badges
+- **GitHub Repository**: Projekt ist jetzt auf GitHub verfügbar
+
 ## [1.0.3] - 2025-12-11
 
 ### 🔧 Behoben
