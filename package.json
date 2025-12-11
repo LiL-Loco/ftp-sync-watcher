@@ -11,12 +11,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/ThaLoco0ne/ftp-sync-watcher"
+    "url": "https://github.com/LiL-Loco/ftp-sync-watcher"
   },
   "bugs": {
-    "url": "https://github.com/ThaLoco0ne/ftp-sync-watcher/issues"
+    "url": "https://github.com/LiL-Loco/ftp-sync-watcher/issues"
   },
-  "homepage": "https://github.com/ThaLoco0ne/ftp-sync-watcher#readme",
+  "homepage": "https://github.com/LiL-Loco/ftp-sync-watcher#readme",
   "engines": {
     "vscode": "^1.85.0"
   },
