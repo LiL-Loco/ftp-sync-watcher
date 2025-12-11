@@ -37,7 +37,9 @@ export class FileWatcher {
     private operationQueue: OperationQueue;
     private isRunning = false;
     private debounceTimers: Map<string, NodeJS.Timeout> = new Map();
-    private debounceMs = 300;
+    private pendingOperations: Set<string> = new Set(); // Track files currently being processed
+    private activeUploads: Set<string> = new Set(); // Track files being uploaded by uploadFile()
+    private debounceMs = 500; // Increased from 300ms to handle Ctrl+S spam
     private onChangeCallback?: (event: FileChangeEvent) => void;
     private onErrorCallback?: (error: Error) => void;
     private stats: WatcherStats = {
@@ -131,6 +133,12 @@ export class FileWatcher {
         this.debounceTimers.forEach((timer) => clearTimeout(timer));
         this.debounceTimers.clear();
 
+        // Clear pending operations tracking
+        this.pendingOperations.clear();
+        
+        // Clear active uploads tracking
+        this.activeUploads.clear();
+
         // Clear operation queue
         this.operationQueue.clear();
 
@@ -186,7 +194,7 @@ export class FileWatcher {
     }
 
     /**
-     * Handle file change events with debouncing
+     * Handle file change events with debouncing and duplicate prevention
      */
     private handleFileChange(type: FileChangeType, uri: vscode.Uri): void {
         const relativePath = getRelativePath(this.workspacePath, uri.fsPath);
@@ -197,15 +205,39 @@ export class FileWatcher {
             return;
         }
 
-        // Debounce the operation
-        const key = `${type}:${uri.fsPath}`;
+        // Use file path as key (not type:path) to coalesce all events for same file
+        const key = uri.fsPath;
+        
+        // If this file is currently being uploaded via uploadFile() (uploadOnSave), skip
+        // This prevents double uploads when both uploadOnSave and watcher are active
+        if (this.activeUploads.has(key)) {
+            Logger.debug(`Skipping watcher ${type} for: ${relativePath} (uploadOnSave in progress)`);
+            return;
+        }
+        
+        // If this file is already being processed, just reset the debounce timer
+        // This ensures we upload the latest version after the current upload finishes
         const existingTimer = this.debounceTimers.get(key);
         if (existingTimer) {
             clearTimeout(existingTimer);
+            Logger.debug(`Debouncing ${type} for: ${relativePath}`);
         }
 
         const timer = setTimeout(() => {
             this.debounceTimers.delete(key);
+            
+            // Skip if this file is already in the queue or being processed
+            if (this.pendingOperations.has(key)) {
+                Logger.debug(`Skipping duplicate ${type} for: ${relativePath} (already queued)`);
+                return;
+            }
+            
+            // Double-check activeUploads again after debounce
+            if (this.activeUploads.has(key)) {
+                Logger.debug(`Skipping watcher ${type} for: ${relativePath} (uploadOnSave completed during debounce)`);
+                return;
+            }
+            
             this.queueFileChange(type, uri, relativePath);
         }, this.debounceMs);
 
@@ -221,6 +253,10 @@ export class FileWatcher {
         relativePath: string
     ): void {
         const event: FileChangeEvent = { type, uri, relativePath };
+        const key = uri.fsPath;
+
+        // Mark this file as pending
+        this.pendingOperations.add(key);
 
         // Notify callback immediately
         if (this.onChangeCallback) {
@@ -233,7 +269,12 @@ export class FileWatcher {
         this.operationQueue.enqueue(
             () => this.processFileChange(type, uri, relativePath),
             { priority, timeout: this.config.timeout || 30000 }
-        ).catch((error) => {
+        ).then(() => {
+            // Remove from pending on success
+            this.pendingOperations.delete(key);
+        }).catch((error) => {
+            // Remove from pending on error
+            this.pendingOperations.delete(key);
             Logger.error(`Failed to process ${type} for ${relativePath}: ${error.message}`);
             if (this.onErrorCallback) {
                 this.onErrorCallback(error as Error);
@@ -298,7 +339,8 @@ export class FileWatcher {
     }
 
     /**
-     * Upload a single file manually
+     * Upload a single file manually (used by uploadOnSave)
+     * This method is serialized via activeUploads to prevent conflicts with the watcher
      */
     public async uploadFile(localPath: string): Promise<boolean> {
         const relativePath = getRelativePath(this.workspacePath, localPath);
@@ -306,6 +348,16 @@ export class FileWatcher {
         if (this.ignoreHandler.isIgnored(relativePath)) {
             Logger.warn(`File is ignored: ${relativePath}`);
             return false;
+        }
+
+        // Mark this file as being uploaded to prevent watcher conflicts
+        this.activeUploads.add(localPath);
+        
+        // Also cancel any pending debounce timer for this file
+        const existingTimer = this.debounceTimers.get(localPath);
+        if (existingTimer) {
+            clearTimeout(existingTimer);
+            this.debounceTimers.delete(localPath);
         }
 
         const remotePath = localToRemotePath(localPath, this.workspacePath, this.config.remotePath);
@@ -330,6 +382,12 @@ export class FileWatcher {
             this.stats.isConnected = this.connectionPool.isConnected();
             Logger.error(`Failed to upload ${relativePath}: ${(error as Error).message}`);
             return false;
+        } finally {
+            // Remove from active uploads after a short delay
+            // This gives the watcher time to ignore the change event
+            setTimeout(() => {
+                this.activeUploads.delete(localPath);
+            }, 1000);
         }
     }
 

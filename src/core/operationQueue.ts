@@ -157,6 +157,9 @@ export class OperationQueue extends EventEmitter {
         } finally {
             this.activeOperations--;
             
+            // Add small delay between operations to prevent flooding the server
+            await new Promise(resolve => setTimeout(resolve, this.operationDelay));
+            
             // Continue processing
             if (this.queue.length > 0 && !this.isPaused) {
                 this.processQueue();

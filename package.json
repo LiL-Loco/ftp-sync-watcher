@@ -2,7 +2,7 @@
   "name": "ftp-sync-watcher",
   "displayName": "FTP/SFTP Sync Watcher",
   "description": "Automatischer Upload und Sync von Dateien auf FTP/SFTP Server mit File Watcher, .gitignore Support und Exclude-Patterns",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "publisher": "ThaLoco0ne",
   "icon": "media/icon.png",
   "galleryBanner": {

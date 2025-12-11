@@ -145,10 +145,42 @@ export class ConnectionPool {
     private isReconnecting = false;
     private pendingOperations = 0;
     private hasSlot = false;
+    
+    // Mutex for serializing FTP operations (basic-ftp only supports one operation at a time)
+    private operationMutex: Promise<void> = Promise.resolve();
+    private operationQueue: Array<{
+        resolve: () => void;
+        reject: (error: Error) => void;
+    }> = [];
 
     constructor(config: FtpSyncConfig) {
         this.config = config;
         this.operationTimeout = config.timeout || 30000;
+    }
+
+    /**
+     * Acquire the operation mutex - ensures only one FTP operation runs at a time
+     * basic-ftp throws "User launched a task while another one is still running" otherwise
+     */
+    private async acquireOperationLock(): Promise<() => void> {
+        // Create a new promise that will be resolved when it's this operation's turn
+        let releaseLock: () => void;
+        
+        const waitForTurn = new Promise<void>((resolve) => {
+            releaseLock = resolve;
+        });
+
+        // Chain onto the existing mutex
+        const previousMutex = this.operationMutex;
+        this.operationMutex = previousMutex.then(() => waitForTurn);
+
+        // Wait for previous operations to complete
+        await previousMutex;
+
+        // Return the release function
+        return () => {
+            releaseLock();
+        };
     }
 
     /**
@@ -313,6 +345,7 @@ export class ConnectionPool {
 
     /**
      * Execute an operation with automatic retry on failure
+     * Operations are serialized using a mutex to prevent basic-ftp errors
      */
     public async executeWithRetry<T>(
         operation: (client: RemoteClient) => Promise<T>,
@@ -321,71 +354,79 @@ export class ConnectionPool {
         const maxRetries = 3;
         let lastError: Error | null = null;
 
-        for (let attempt = 1; attempt <= maxRetries; attempt++) {
-            try {
-                this.pendingOperations++;
-                const client = await this.getConnection();
-                
-                // Execute with timeout
-                const result = await this.withTimeout(
-                    operation(client),
-                    this.operationTimeout,
-                    `${operationName} timeout`
-                );
+        // Acquire the operation lock - this ensures only one FTP operation runs at a time
+        const releaseLock = await this.acquireOperationLock();
 
-                this.lastActivity = Date.now();
-                this.pendingOperations--;
-                return result;
-            } catch (error) {
-                this.pendingOperations--;
-                lastError = error as Error;
-                
-                const isConnectionError = this.isConnectionError(error as Error);
-                const isRateLimit = this.isRateLimitError(error as Error);
-                
-                Logger.warn(`${operationName} failed (attempt ${attempt}/${maxRetries}): ${lastError.message}`);
-
-                // Rate limit error - special handling
-                if (isRateLimit) {
-                    globalConnectionManager.setRateLimited();
-                    this.health = 'rate-limited';
+        try {
+            for (let attempt = 1; attempt <= maxRetries; attempt++) {
+                try {
+                    this.pendingOperations++;
+                    const client = await this.getConnection();
                     
-                    if (attempt < maxRetries) {
-                        // Wait for rate limit to expire then retry
-                        const waitTime = globalConnectionManager.getRateLimitRemaining();
-                        Logger.info(`Waiting ${Math.ceil(waitTime / 1000)}s due to server connection limit...`);
-                        await new Promise(resolve => setTimeout(resolve, waitTime));
-                        // Reset the connection for retry
-                        if (this.client) {
-                            try {
-                                await this.client.disconnect();
-                            } catch {
-                                // Ignore
+                    // Execute with timeout
+                    const result = await this.withTimeout(
+                        operation(client),
+                        this.operationTimeout,
+                        `${operationName} timeout`
+                    );
+
+                    this.lastActivity = Date.now();
+                    this.pendingOperations--;
+                    return result;
+                } catch (error) {
+                    this.pendingOperations--;
+                    lastError = error as Error;
+                    
+                    const isConnectionError = this.isConnectionError(error as Error);
+                    const isRateLimit = this.isRateLimitError(error as Error);
+                    
+                    Logger.warn(`${operationName} failed (attempt ${attempt}/${maxRetries}): ${lastError.message}`);
+
+                    // Rate limit error - special handling
+                    if (isRateLimit) {
+                        globalConnectionManager.setRateLimited();
+                        this.health = 'rate-limited';
+                        
+                        if (attempt < maxRetries) {
+                            // Wait for rate limit to expire then retry
+                            const waitTime = globalConnectionManager.getRateLimitRemaining();
+                            Logger.info(`Waiting ${Math.ceil(waitTime / 1000)}s due to server connection limit...`);
+                            await new Promise(resolve => setTimeout(resolve, waitTime));
+                            // Reset the connection for retry
+                            if (this.client) {
+                                try {
+                                    await this.client.disconnect();
+                                } catch {
+                                    // Ignore
+                                }
+                                this.client = null;
+                                if (this.hasSlot) {
+                                    globalConnectionManager.releaseSlot();
+                                    this.hasSlot = false;
+                                }
                             }
-                            this.client = null;
-                            if (this.hasSlot) {
-                                globalConnectionManager.releaseSlot();
-                                this.hasSlot = false;
-                            }
+                            this.health = 'disconnected';
                         }
-                        this.health = 'disconnected';
+                    } else if (isConnectionError && attempt < maxRetries) {
+                        // Connection error - try to reconnect
+                        this.health = 'degraded';
+                        try {
+                            await this.reconnect();
+                        } catch (reconnectError) {
+                            Logger.error(`Reconnection failed: ${(reconnectError as Error).message}`);
+                        }
+                    } else if (!isConnectionError) {
+                        // Non-connection error - don't retry
+                        throw error;
                     }
-                } else if (isConnectionError && attempt < maxRetries) {
-                    // Connection error - try to reconnect
-                    this.health = 'degraded';
-                    try {
-                        await this.reconnect();
-                    } catch (reconnectError) {
-                        Logger.error(`Reconnection failed: ${(reconnectError as Error).message}`);
-                    }
-                } else if (!isConnectionError) {
-                    // Non-connection error - don't retry
-                    throw error;
                 }
             }
-        }
 
-        throw lastError || new Error(`${operationName} failed after ${maxRetries} attempts`);
+            throw lastError || new Error(`${operationName} failed after ${maxRetries} attempts`);
+        } finally {
+            // Always release the lock
+            releaseLock();
+        }
     }
 
     /**

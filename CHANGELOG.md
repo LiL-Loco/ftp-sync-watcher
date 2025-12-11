@@ -5,6 +5,23 @@ Alle wichtigen Änderungen an diesem Projekt werden in dieser Datei dokumentiert
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt verwendet [Semantic Versioning](https://semver.org/lang/de/).
 
+## [1.1.2] - 2025-12-11
+
+### 🔧 Behoben
+
+- **Ctrl+S Spam Fix**: Mutex Lock verhindert parallele FTP-Operationen
+  - "User launched a task while another one is still running" Error behoben
+  - Nur eine FTP-Operation gleichzeitig pro Verbindung
+- **Doppelte Uploads verhindert**: `activeUploads` Set trackt laufende Uploads
+  - FileWatcher ignoriert Dateien die bereits von uploadOnSave hochgeladen werden
+  - Verhindert Konflikte zwischen uploadOnSave und Watcher
+- **Verbessertes Debouncing**: 500ms statt 300ms, bessere Duplicate Detection
+
+### ✨ Verbessert
+
+- **Activity Bar Icon**: Neues Outline-Style Cloud Icon (20x20px)
+- **100ms Delay** zwischen Queue-Operationen verhindert Server-Flooding
+
 ## [1.1.1] - 2025-12-11
 
 ### 🔧 Behoben
