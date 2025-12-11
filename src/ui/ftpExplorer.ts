@@ -1,11 +1,12 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as fs from 'fs';
 import { ConfigManager } from '../core';
 import { FtpSyncConfig } from '../types';
 import { FtpClient } from '../clients/ftpClient';
 import { SftpClientWrapper } from '../clients/sftpClient';
 import { RemoteClient, RemoteFileInfo } from '../clients/remoteClient';
-import { Logger } from '../utils';
+import { Logger, showInfoMessage, showSuccessMessage, showWarningMessage, showErrorMessage, withFolderProgress, withFileProgress } from '../utils';
 
 /**
  * Tree item for FTP Explorer
@@ -155,7 +156,7 @@ export class FtpExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
     public async connect(): Promise<void> {
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (!workspaceFolders || workspaceFolders.length === 0) {
-            vscode.window.showWarningMessage('No workspace folder open');
+            showWarningMessage('No workspace folder open');
             return;
         }
 
@@ -170,7 +171,7 @@ export class FtpExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
         }
 
         if (!this.config) {
-            vscode.window.showWarningMessage('No FTP configuration found. Create one first.');
+            showWarningMessage('No FTP configuration found. Create one first.');
             this.refresh();
             return;
         }
@@ -190,12 +191,12 @@ export class FtpExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
             this.connectionStatus = 'connected';
             this.currentPath = this.config.remotePath;
             Logger.success(`FTP Explorer connected to ${this.config.host}`);
-            vscode.window.showInformationMessage(`Connected to ${this.config.name || this.config.host}`);
+            showSuccessMessage(`Connected to ${this.config.name || this.config.host}`);
         } catch (error) {
             this.connectionStatus = 'error';
             this.errorMessage = (error as Error).message;
             Logger.error(`FTP Explorer connection failed: ${this.errorMessage}`);
-            vscode.window.showErrorMessage(`Connection failed: ${this.errorMessage}`);
+            showErrorMessage(`Connection failed: ${this.errorMessage}`);
         }
 
         this.refresh();
@@ -345,31 +346,121 @@ export class FtpExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
     }
 
     /**
-     * Download a file from the server
+     * Download a file or folder from the server
      */
     public async downloadItem(item: FtpTreeItem): Promise<void> {
         if (!this.client || !this.config || !this.workspacePath) {
-            vscode.window.showWarningMessage('Not connected');
+            showWarningMessage('Not connected');
             return;
         }
 
         try {
-            // Calculate local path
-            const relativePath = item.remotePath.startsWith(this.config.remotePath)
-                ? item.remotePath.substring(this.config.remotePath.length)
-                : item.remotePath;
+            // Calculate relative path from remote root
+            let relativePath = item.remotePath;
+            if (relativePath.startsWith(this.config.remotePath)) {
+                relativePath = relativePath.substring(this.config.remotePath.length);
+            }
+            // Remove leading slashes to prevent path.join issues on Windows
+            relativePath = relativePath.replace(/^[/\\]+/, '');
             
             const localPath = path.join(this.workspacePath, this.config.localPath || '.', relativePath);
 
             if (item.isDirectory) {
-                // Download folder - to be implemented
-                vscode.window.showInformationMessage('Folder download coming soon!');
+                // Download folder recursively with progress
+                await this.downloadFolderRecursive(item.remotePath, localPath, item.label as string);
             } else {
-                await this.client.downloadFile(item.remotePath, localPath);
-                vscode.window.showInformationMessage(`Downloaded: ${item.label}`);
+                // Ensure local directory exists
+                const localDir = path.dirname(localPath);
+                if (!fs.existsSync(localDir)) {
+                    fs.mkdirSync(localDir, { recursive: true });
+                }
+                
+                // Download single file with progress
+                await withFileProgress(`Downloading ${item.label}`, async () => {
+                    await this.client!.downloadFile(item.remotePath, localPath);
+                });
+                showSuccessMessage(`Downloaded: ${item.label}`);
             }
         } catch (error) {
-            vscode.window.showErrorMessage(`Download failed: ${(error as Error).message}`);
+            if ((error as Error).message === 'Operation cancelled by user') {
+                showInfoMessage('Download cancelled');
+            } else {
+                showErrorMessage(`Download failed: ${(error as Error).message}`);
+            }
+        }
+    }
+
+    /**
+     * Download a folder recursively with progress tracking
+     */
+    private async downloadFolderRecursive(remotePath: string, localPath: string, folderName: string): Promise<void> {
+        if (!this.client) {
+            return;
+        }
+
+        // First, count all files to download
+        const filesToDownload: Array<{ remotePath: string; localPath: string; name: string }> = [];
+        
+        const collectFiles = async (remoteDir: string, localDir: string): Promise<void> => {
+            const items = await this.client!.listDirectory(remoteDir);
+            
+            for (const item of items) {
+                const itemRemotePath = item.path;
+                const itemLocalPath = path.join(localDir, item.name);
+                
+                if (item.type === 'directory') {
+                    await collectFiles(itemRemotePath, itemLocalPath);
+                } else {
+                    filesToDownload.push({
+                        remotePath: itemRemotePath,
+                        localPath: itemLocalPath,
+                        name: item.name
+                    });
+                }
+            }
+        };
+
+        // Collect all files first
+        await collectFiles(remotePath, localPath);
+        
+        if (filesToDownload.length === 0) {
+            showInfoMessage(`Folder "${folderName}" is empty`);
+            return;
+        }
+
+        // Download with progress
+        let successCount = 0;
+        let failCount = 0;
+
+        await withFolderProgress(
+            `Downloading ${folderName}`,
+            filesToDownload.length,
+            async (reportProgress) => {
+                for (let i = 0; i < filesToDownload.length; i++) {
+                    const file = filesToDownload[i];
+                    reportProgress(i + 1, file.name);
+                    
+                    try {
+                        // Ensure local directory exists
+                        const localDir = path.dirname(file.localPath);
+                        if (!fs.existsSync(localDir)) {
+                            fs.mkdirSync(localDir, { recursive: true });
+                        }
+                        
+                        await this.client!.downloadFile(file.remotePath, file.localPath);
+                        successCount++;
+                    } catch (error) {
+                        Logger.error(`Failed to download ${file.name}: ${(error as Error).message}`);
+                        failCount++;
+                    }
+                }
+            }
+        );
+
+        if (failCount === 0) {
+            showSuccessMessage(`Downloaded ${successCount} files from "${folderName}"`);
+        } else {
+            showWarningMessage(`Downloaded ${successCount} files, ${failCount} failed`);
         }
     }
 
@@ -378,7 +469,7 @@ export class FtpExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
      */
     public async deleteItem(item: FtpTreeItem): Promise<void> {
         if (!this.client) {
-            vscode.window.showWarningMessage('Not connected');
+            showWarningMessage('Not connected');
             return;
         }
 
@@ -404,9 +495,9 @@ export class FtpExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
             this.directoryCache.delete(parentPath);
             
             this.refresh();
-            vscode.window.showInformationMessage(`Deleted: ${item.label}`);
+            showSuccessMessage(`Deleted: ${item.label}`);
         } catch (error) {
-            vscode.window.showErrorMessage(`Delete failed: ${(error as Error).message}`);
+            showErrorMessage(`Delete failed: ${(error as Error).message}`);
         }
     }
 

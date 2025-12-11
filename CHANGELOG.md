@@ -5,6 +5,26 @@ Alle wichtigen Änderungen an diesem Projekt werden in dieser Datei dokumentiert
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt verwendet [Semantic Versioning](https://semver.org/lang/de/).
 
+## [1.1.3] - 2025-12-11
+
+### ✨ Hinzugefügt
+
+- **Progress Indicators**: Fortschrittsanzeige für Upload/Download Operationen
+  - Einzelne Dateien zeigen Fortschrittsbalken
+  - Ordner-Uploads/-Downloads zeigen Datei-Counter (z.B. "5/20 uploading file.ts")
+- **Download Folder**: Komplette Ordner rekursiv vom Server herunterladen
+- **Auto-Dismiss Notifications**: Benachrichtigungen verschwinden automatisch
+  - Info/Success: 3 Sekunden
+  - Warnings: 5 Sekunden
+  - Errors: Bleiben bis zum Schließen
+- **SSH Key Auth Dokumentation**: Ausführliche Anleitung in Config-Template
+
+### 🔧 Behoben
+
+- **Download Pfad Bug**: Korrigierte Pfadberechnung bei Downloads
+  - Führende Slashes werden entfernt um doppelte Laufwerksbuchstaben zu vermeiden
+  - z.B. `e:\workspace\e:\path` → `e:\workspace\path`
+
 ## [1.1.2] - 2025-12-11
 
 ### 🔧 Behoben

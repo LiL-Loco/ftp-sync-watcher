@@ -418,12 +418,20 @@ export class FileWatcher {
 
     /**
      * Upload a folder recursively
+     * @param localPath Path to the folder to upload
+     * @param onProgress Optional callback for progress reporting (current, total, fileName)
      */
-    public async uploadFolder(localPath: string): Promise<{ success: number; failed: number }> {
+    public async uploadFolder(
+        localPath: string,
+        onProgress?: (current: number, total: number, fileName: string) => void
+    ): Promise<{ success: number; failed: number }> {
         const fs = await import('fs');
         const result = { success: 0, failed: 0 };
 
-        const processDir = async (dirPath: string): Promise<void> => {
+        // First, collect all files to upload
+        const filesToUpload: Array<{ fullPath: string; relativePath: string }> = [];
+        
+        const collectFiles = (dirPath: string): void => {
             const entries = fs.readdirSync(dirPath, { withFileTypes: true });
 
             for (const entry of entries) {
@@ -435,20 +443,62 @@ export class FileWatcher {
                 }
 
                 if (entry.isDirectory()) {
-                    await processDir(fullPath);
+                    collectFiles(fullPath);
                 } else if (entry.isFile()) {
-                    const success = await this.uploadFile(fullPath);
-                    if (success) {
-                        result.success++;
-                    } else {
-                        result.failed++;
-                    }
+                    filesToUpload.push({ fullPath, relativePath });
                 }
             }
         };
 
-        await processDir(localPath);
+        collectFiles(localPath);
+        const totalFiles = filesToUpload.length;
+
+        // Upload files with progress
+        for (let i = 0; i < filesToUpload.length; i++) {
+            const file = filesToUpload[i];
+            
+            if (onProgress) {
+                onProgress(i + 1, totalFiles, path.basename(file.fullPath));
+            }
+
+            const success = await this.uploadFile(file.fullPath);
+            if (success) {
+                result.success++;
+            } else {
+                result.failed++;
+            }
+        }
+
         return result;
+    }
+
+    /**
+     * Get file count in folder (for progress estimation)
+     */
+    public async getFileCount(localPath: string): Promise<number> {
+        const fs = await import('fs');
+        let count = 0;
+
+        const countFiles = (dirPath: string): void => {
+            const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+            for (const entry of entries) {
+                const fullPath = path.join(dirPath, entry.name);
+                const relativePath = getRelativePath(this.workspacePath, fullPath);
+
+                if (this.ignoreHandler.isIgnored(relativePath)) {
+                    continue;
+                }
+
+                if (entry.isDirectory()) {
+                    countFiles(fullPath);
+                } else if (entry.isFile()) {
+                    count++;
+                }
+            }
+        };
+
+        countFiles(localPath);
+        return count;
     }
 
     /**

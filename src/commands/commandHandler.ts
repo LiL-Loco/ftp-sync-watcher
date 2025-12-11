@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { ConfigManager, FileWatcher } from '../core';
 import { StatusBar } from '../ui';
-import { Logger, getRelativePath, localToRemotePath } from '../utils';
+import { Logger, getRelativePath, localToRemotePath, showInfoMessage, showSuccessMessage, showWarningMessage, showErrorMessage, withFileProgress, withFolderProgress } from '../utils';
 
 /**
  * Command handler for all FTP Sync commands
@@ -52,13 +52,13 @@ export class CommandHandler {
         const fileUri = uri || vscode.window.activeTextEditor?.document.uri;
         
         if (!fileUri) {
-            vscode.window.showWarningMessage('No file selected');
+            showWarningMessage('No file selected');
             return;
         }
 
         const config = this.configManager.getConfigForUri(fileUri);
         if (!config) {
-            vscode.window.showWarningMessage('No FTP configuration found for this workspace');
+            showWarningMessage('No FTP configuration found for this workspace');
             return;
         }
 
@@ -73,19 +73,22 @@ export class CommandHandler {
             // Get or create watcher, ensuring we reuse existing connections
             const watcher = await this.getOrCreateWatcher(workspacePath, config);
 
-            const success = await watcher.uploadFile(fileUri.fsPath);
+            const fileName = getRelativePath(workspacePath, fileUri.fsPath);
+            const success = await withFileProgress(`Uploading ${fileName}`, async () => {
+                return watcher.uploadFile(fileUri.fsPath);
+            });
             
             if (success) {
                 this.statusBar.showMessage('Upload complete!');
-                vscode.window.showInformationMessage(`Uploaded: ${getRelativePath(workspacePath, fileUri.fsPath)}`);
+                showSuccessMessage(`Uploaded: ${fileName}`);
             } else {
                 this.statusBar.setState('error');
-                vscode.window.showErrorMessage('Upload failed - Check output for details');
+                showErrorMessage('Upload failed - Check output for details');
             }
         } catch (error) {
             this.statusBar.setState('error');
             Logger.error(`Upload failed: ${(error as Error).message}`, error as Error);
-            vscode.window.showErrorMessage(`Upload failed: ${(error as Error).message}`);
+            showErrorMessage(`Upload failed: ${(error as Error).message}`);
         } finally {
             this.statusBar.endSyncing();
         }
@@ -113,7 +116,7 @@ export class CommandHandler {
 
         const config = this.configManager.getConfigForUri(folderUri);
         if (!config) {
-            vscode.window.showWarningMessage('No FTP configuration found for this workspace');
+            showWarningMessage('No FTP configuration found for this workspace');
             return;
         }
 
@@ -127,17 +130,36 @@ export class CommandHandler {
         try {
             // Get or create watcher, ensuring we reuse existing connections
             const watcher = await this.getOrCreateWatcher(workspacePath, config);
+            
+            // Get file count for progress
+            const fileCount = await watcher.getFileCount(folderUri.fsPath);
+            
+            if (fileCount === 0) {
+                showInfoMessage('Folder is empty or all files are ignored');
+                return;
+            }
 
-            const result = await watcher.uploadFolder(folderUri.fsPath);
+            const folderName = folderUri.fsPath.split(/[\\/]/).pop() || 'folder';
+            
+            // Upload with progress
+            const result = await withFolderProgress(
+                `Uploading ${folderName}`,
+                fileCount,
+                async (reportProgress) => {
+                    return watcher.uploadFolder(folderUri!.fsPath, (current, total, fileName) => {
+                        reportProgress(current, fileName);
+                    });
+                }
+            );
             
             this.statusBar.showMessage(`Uploaded ${result.success} files`);
-            vscode.window.showInformationMessage(
+            showSuccessMessage(
                 `Upload complete: ${result.success} succeeded, ${result.failed} failed`
             );
         } catch (error) {
             this.statusBar.setState('error');
             Logger.error(`Folder upload failed: ${(error as Error).message}`, error as Error);
-            vscode.window.showErrorMessage(`Upload failed: ${(error as Error).message}`);
+            showErrorMessage(`Upload failed: ${(error as Error).message}`);
         } finally {
             this.statusBar.endSyncing();
         }
@@ -150,13 +172,13 @@ export class CommandHandler {
         const fileUri = uri || vscode.window.activeTextEditor?.document.uri;
         
         if (!fileUri) {
-            vscode.window.showWarningMessage('No file selected');
+            showWarningMessage('No file selected');
             return;
         }
 
         const config = this.configManager.getConfigForUri(fileUri);
         if (!config) {
-            vscode.window.showWarningMessage('No FTP configuration found for this workspace');
+            showWarningMessage('No FTP configuration found for this workspace');
             return;
         }
 
@@ -177,15 +199,15 @@ export class CommandHandler {
             
             if (success) {
                 this.statusBar.showMessage('Download complete!');
-                vscode.window.showInformationMessage(`Downloaded: ${getRelativePath(workspacePath, fileUri.fsPath)}`);
+                showSuccessMessage(`Downloaded: ${getRelativePath(workspacePath, fileUri.fsPath)}`);
             } else {
                 this.statusBar.setState('error');
-                vscode.window.showErrorMessage('Download failed - Check output for details');
+                showErrorMessage('Download failed - Check output for details');
             }
         } catch (error) {
             this.statusBar.setState('error');
             Logger.error(`Download failed: ${(error as Error).message}`, error as Error);
-            vscode.window.showErrorMessage(`Download failed: ${(error as Error).message}`);
+            showErrorMessage(`Download failed: ${(error as Error).message}`);
         } finally {
             this.statusBar.endSyncing();
         }
@@ -195,7 +217,7 @@ export class CommandHandler {
      * Download folder (placeholder)
      */
     private async downloadFolder(uri?: vscode.Uri): Promise<void> {
-        vscode.window.showInformationMessage('Download folder feature coming soon!');
+        showInfoMessage('Download folder feature coming soon!');
     }
 
     /**
@@ -204,7 +226,7 @@ export class CommandHandler {
     private async startWatcher(): Promise<void> {
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (!workspaceFolders) {
-            vscode.window.showWarningMessage('No workspace folder open');
+            showWarningMessage('No workspace folder open');
             return;
         }
 
@@ -240,14 +262,14 @@ export class CommandHandler {
             } catch (error) {
                 Logger.error(`Failed to start watcher for ${folder.name}: ${(error as Error).message}`);
                 this.statusBar.setState('error');
-                vscode.window.showErrorMessage(`Failed to start watcher: ${(error as Error).message}`);
+                showErrorMessage(`Failed to start watcher: ${(error as Error).message}`);
                 return;
             }
         }
 
         if (this.watchers.size > 0) {
             this.statusBar.setState('watching');
-            vscode.window.showInformationMessage('FTP Sync: File watcher started');
+            showSuccessMessage('FTP Sync: File watcher started');
         }
     }
 
@@ -262,7 +284,7 @@ export class CommandHandler {
         
         this.watchers.clear();
         this.statusBar.setState('idle');
-        vscode.window.showInformationMessage('FTP Sync: File watcher stopped');
+        showInfoMessage('FTP Sync: File watcher stopped');
     }
 
     /**
@@ -298,7 +320,7 @@ export class CommandHandler {
         
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (!workspaceFolders) {
-            vscode.window.showWarningMessage('No workspace folder open');
+            showWarningMessage('No workspace folder open');
             return;
         }
 

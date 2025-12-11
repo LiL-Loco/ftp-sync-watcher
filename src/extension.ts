@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { ConfigManager } from './core';
 import { CommandHandler } from './commands';
 import { StatusBar, FtpExplorerProvider, FtpTreeItem } from './ui';
-import { Logger } from './utils';
+import { Logger, showErrorMessage } from './utils';
 
 let configManager: ConfigManager;
 let commandHandler: CommandHandler;
@@ -13,9 +13,6 @@ let ftpExplorer: FtpExplorerProvider;
  * Extension activation
  */
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-    // Show immediate feedback
-    vscode.window.showInformationMessage('FTP Sync Watcher: Activating...');
-    
     // Initialize logger
     Logger.init(context);
     Logger.info('FTP Sync Watcher extension activating...');
@@ -27,7 +24,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         
         // Always show status bar
         statusBar.show();
-        vscode.window.showInformationMessage('FTP Sync: Status Bar created');
 
         // Initialize config manager
         configManager = new ConfigManager();
@@ -112,7 +108,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         Logger.success('FTP Sync Watcher extension activated');
     } catch (error) {
         Logger.error(`Failed to activate extension: ${(error as Error).message}`, error as Error);
-        vscode.window.showErrorMessage(`FTP Sync: Failed to activate - ${(error as Error).message}`);
+        showErrorMessage(`FTP Sync: Failed to activate - ${(error as Error).message}`);
     }
 }
 

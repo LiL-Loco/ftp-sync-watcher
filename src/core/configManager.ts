@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { FtpSyncConfig, mergeWithDefaults } from '../types';
-import { Logger, normalizePath } from '../utils';
+import { Logger, normalizePath, showInfoMessage, showSuccessMessage, showErrorMessage } from '../utils';
 
 const CONFIG_FILENAME = '.ftpsync.json';
 const CONFIG_DIR = '.vscode';
@@ -87,7 +87,7 @@ export class ConfigManager {
             return config;
         } catch (error) {
             Logger.error(`Failed to load config from ${configPath}: ${(error as Error).message}`);
-            vscode.window.showErrorMessage(`FTP Sync: Failed to load configuration - ${(error as Error).message}`);
+            showErrorMessage(`FTP Sync: Failed to load configuration - ${(error as Error).message}`);
             return null;
         }
     }
@@ -181,7 +181,7 @@ export class ConfigManager {
                 watcher.onDidChange(async (uri) => {
                     Logger.info(`Config file changed: ${uri.fsPath}`);
                     await this.loadConfigForFolder(folder.uri.fsPath);
-                    vscode.window.showInformationMessage('FTP Sync: Configuration reloaded');
+                    showInfoMessage('FTP Sync: Configuration reloaded');
                 })
             );
 
@@ -190,7 +190,7 @@ export class ConfigManager {
                     Logger.info(`Config file created: ${uri.fsPath}`);
                     await this.loadConfigForFolder(folder.uri.fsPath);
                     vscode.commands.executeCommand('setContext', 'ftpSync.hasConfig', this.hasConfigs());
-                    vscode.window.showInformationMessage('FTP Sync: Configuration loaded');
+                    showInfoMessage('FTP Sync: Configuration loaded');
                 })
             );
 
@@ -295,13 +295,29 @@ export class ConfigManager {
     // Benutzername für die Anmeldung
     "username": "username",
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // OPTION 1: Passwort-Authentifizierung (einfach, aber weniger sicher)
+    // ═══════════════════════════════════════════════════════════════════════════
     // Passwort für die Anmeldung
-    // HINWEIS: Für SFTP ist ein SSH-Key (privateKeyPath) sicherer!
     "password": "",
 
-    // Pfad zur privaten SSH-Schlüsseldatei (nur für SFTP)
-    // Beispiel: "C:/Users/Name/.ssh/id_rsa" oder "~/.ssh/id_rsa"
+    // ═══════════════════════════════════════════════════════════════════════════
+    // OPTION 2: SSH-Key-Authentifizierung (sicherer, empfohlen für SFTP)
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Pfad zur privaten SSH-Schlüsseldatei
+    // Windows: "C:/Users/DeinName/.ssh/id_rsa"
+    // Mac/Linux: "~/.ssh/id_rsa" oder "/home/user/.ssh/id_rsa"
+    // 
+    // SSH-Key erstellen (falls noch nicht vorhanden):
+    //   ssh-keygen -t rsa -b 4096 -C "deine@email.de"
+    // 
+    // Public Key auf Server kopieren:
+    //   ssh-copy-id -i ~/.ssh/id_rsa.pub user@server.de
     "privateKeyPath": "",
+
+    // Passphrase für den SSH-Key (falls der Key passwortgeschützt ist)
+    // Leer lassen wenn der Key keine Passphrase hat
+    "passphrase": "",
 
     // ─────────────────────────────────────────────────────────────────────────────
     // PFAD-EINSTELLUNGEN
@@ -384,7 +400,7 @@ export class ConfigManager {
         await vscode.window.showTextDocument(doc);
         
         Logger.info(`Created config file at ${configPath}`);
-        vscode.window.showInformationMessage('FTP Sync: Configuration file created. Please edit with your server details.');
+        showSuccessMessage('FTP Sync: Configuration file created. Please edit with your server details.', 5000);
     }
 
     /**
