@@ -5,6 +5,18 @@ Alle wichtigen Änderungen an diesem Projekt werden in dieser Datei dokumentiert
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt verwendet [Semantic Versioning](https://semver.org/lang/de/).
 
+## [1.1.4] - 2025-12-13
+
+### 🔧 Behoben
+
+- **Verzeichnis-Handling beim File Watcher**: FileWatcher erkennt jetzt korrekt ob es sich um eine Datei oder ein Verzeichnis handelt
+  - Leere Ordner werden nicht mehr als "unbekannte Datei" auf den Server hochgeladen
+  - Verzeichnisse nutzen `ensureDirectory()` statt `uploadFile()`
+- **Download-Pfad-Berechnung verbessert**: Robustere Pfad-Normalisierung
+  - Entfernt Laufwerksbuchstaben aus relativePath (C:, E:, etc.)
+  - Verhindert doppelte Pfade durch korrekte basePath-Berechnung
+  - Filtert leere Pfad-Segmente und "." Komponenten
+
 ## [1.1.3] - 2025-12-11
 
 ### ✨ Hinzugefügt

@@ -360,10 +360,20 @@ export class FtpExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
             if (relativePath.startsWith(this.config.remotePath)) {
                 relativePath = relativePath.substring(this.config.remotePath.length);
             }
-            // Remove leading slashes to prevent path.join issues on Windows
-            relativePath = relativePath.replace(/^[/\\]+/, '');
             
-            const localPath = path.join(this.workspacePath, this.config.localPath || '.', relativePath);
+            // Remove leading slashes and any drive letters (C:, E:, etc.)
+            relativePath = relativePath.replace(/^[/\\]+/, '').replace(/^[a-zA-Z]:/, '');
+            
+            // Convert to platform-independent path and ensure it's relative
+            relativePath = relativePath.split(/[/\\]/).filter(p => p && p !== '.').join(path.sep);
+            
+            // Build absolute local path
+            const basePath = path.isAbsolute(this.config.localPath || '.')
+                ? this.config.localPath
+                : path.join(this.workspacePath, this.config.localPath || '.');
+            const localPath = path.join(basePath, relativePath);
+            
+            Logger.info(`Download: remotePath="${item.remotePath}", relativePath="${relativePath}", localPath="${localPath}"`);
 
             if (item.isDirectory) {
                 // Download folder recursively with progress

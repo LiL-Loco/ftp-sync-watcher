@@ -302,12 +302,24 @@ export class FileWatcher {
                     switch (type) {
                         case 'created':
                         case 'changed':
-                            const result = await client.uploadFile(uri.fsPath, remotePath);
-                            if (result.success) {
+                            // Check if it's a directory
+                            const fs = await import('fs');
+                            const stats = fs.statSync(uri.fsPath);
+                            
+                            if (stats.isDirectory()) {
+                                // For directories, just ensure they exist on remote
+                                Logger.debug(`Creating directory: ${remotePath}`);
+                                await client.ensureDirectory(remotePath);
                                 this.stats.uploadsSucceeded++;
                             } else {
-                                this.stats.uploadsFailed++;
-                                throw result.error || new Error('Upload failed');
+                                // For files, upload normally
+                                const result = await client.uploadFile(uri.fsPath, remotePath);
+                                if (result.success) {
+                                    this.stats.uploadsSucceeded++;
+                                } else {
+                                    this.stats.uploadsFailed++;
+                                    throw result.error || new Error('Upload failed');
+                                }
                             }
                             break;
                         case 'deleted':
