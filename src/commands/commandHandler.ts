@@ -216,7 +216,7 @@ export class CommandHandler {
     /**
      * Download folder (placeholder)
      */
-    private async downloadFolder(uri?: vscode.Uri): Promise<void> {
+    private async downloadFolder(_uri?: vscode.Uri): Promise<void> {
         showInfoMessage('Download folder feature coming soon!');
     }
 

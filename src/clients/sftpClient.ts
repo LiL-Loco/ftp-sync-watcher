@@ -19,6 +19,8 @@ export class SftpClientWrapper extends RemoteClient {
     async connect(): Promise<void> {
         try {
             Logger.info(`Connecting to SFTP server ${this.config.host}:${this.config.port}...`);
+
+            // SFTP is already encrypted via SSH; FTPS-specific secure/secureOptions are ignored here.
             
             const connectionOptions: SftpClient.ConnectOptions = {
                 host: this.config.host,

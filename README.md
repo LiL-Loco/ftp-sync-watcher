@@ -44,6 +44,7 @@
 | 📁 **.gitignore Support**     | Automatically respects your `.gitignore` rules              |
 | 🚫 **Custom Ignore Patterns** | Exclude files and folders with powerful glob patterns       |
 | 🔐 **SSH Key Authentication** | Secure SFTP connections with private key support            |
+| 🔒 **FTPS / TLS Support**     | Secure FTP connections with certificate and TLS options     |
 | 📊 **Status Bar Integration** | Real-time sync status at a glance                           |
 | ⚡ **Smart Reconnection**     | Automatic reconnection with exponential backoff             |
 | 🔁 **Operation Queue**        | Prevents hanging uploads with timeout and retry mechanisms  |
@@ -146,6 +147,48 @@ Press `Ctrl+Shift+P` → `FTP Sync: Create Configuration File`
 }
 ```
 
+### FTPS with Custom TLS Options
+
+```json
+{
+  "name": "Secure FTP Server",
+  "protocol": "ftp",
+  "host": "ftp.example.com",
+  "port": 21,
+  "username": "ftpuser",
+  "password": "your-password",
+  "remotePath": "/public_html",
+  "secure": true,
+  "secureOptions": {
+    "rejectUnauthorized": true,
+    "caPath": ".certs/ca.pem",
+    "certPath": ".certs/client-cert.pem",
+    "keyPath": ".certs/client-key.pem",
+    "minVersion": "TLSv1.2",
+    "maxVersion": "TLSv1.3"
+  },
+  "uploadOnSave": true
+}
+```
+
+### FTPS with Self-Signed Certificate
+
+```json
+{
+  "name": "Legacy FTPS Server",
+  "protocol": "ftp",
+  "host": "ftp.example.com",
+  "port": 21,
+  "username": "ftpuser",
+  "password": "your-password",
+  "remotePath": "/public_html",
+  "secure": true,
+  "secureOptions": {
+    "rejectUnauthorized": false
+  }
+}
+```
+
 ### Configuration Reference
 
 <details>
@@ -170,7 +213,17 @@ Press `Ctrl+Shift+P` → `FTP Sync: Create Configuration File`
 | `watcher.autoDelete` | boolean             | `false`              | Delete remote files when local deleted   |
 | `ignore`             | string[]            | `[...]`              | Glob patterns to exclude                 |
 | `useGitIgnore`       | boolean             | `true`               | Apply .gitignore rules                   |
-| `secure`             | boolean             | `false`              | Use FTPS (FTP over TLS)                  |
+| `secure`             | boolean             | `false`              | Use FTPS (FTP over TLS) for FTP only     |
+| `secureOptions.rejectUnauthorized` | boolean | `true` | Reject self-signed or invalid certificates |
+| `secureOptions.caPath` | string            | -                    | Path to a trusted CA certificate         |
+| `secureOptions.certPath` | string          | -                    | Path to a client certificate             |
+| `secureOptions.keyPath` | string           | -                    | Path to a client private key             |
+| `secureOptions.passphrase` | string        | -                    | Passphrase for encrypted TLS private key |
+| `secureOptions.minVersion` | string        | -                    | Minimum TLS version (`TLSv1.2`/`TLSv1.3`) |
+| `secureOptions.maxVersion` | string        | -                    | Maximum TLS version (`TLSv1.2`/`TLSv1.3`) |
+| `secureOptions.ciphers` | string          | -                    | OpenSSL cipher list                      |
+| `secureOptions.servername` | string       | -                    | Override TLS server name (SNI)           |
+| `secureOptions.secureProtocol` | string   | -                    | Explicit Node.js TLS protocol override   |
 | `timeout`            | number              | `30000`              | Connection timeout in ms                 |
 | `debug`              | boolean             | `false`              | Enable debug logging                     |
 
@@ -286,9 +339,12 @@ The status bar shows the current state:
 > ⚠️ **Important Security Recommendations**
 
 1. **Use SSH Keys** — Prefer `privateKeyPath` over `password` for SFTP
-2. **Protect Config Files** — Add `.ftpsync.json` to `.gitignore` if it contains sensitive data
-3. **Use Environment Variables** — Consider using passphrase-protected keys
-4. **Limit Permissions** — Use the minimum required server permissions
+2. **Use `rejectUnauthorized: true`** — Only disable certificate validation for self-signed FTPS servers you explicitly trust
+3. **Protect Config Files** — Add `.ftpsync.json` to `.gitignore` if it contains sensitive data
+4. **Use Environment Variables** — Consider using passphrase-protected keys
+5. **Limit Permissions** — Use the minimum required server permissions
+
+> Note: `secure` and `secureOptions` only apply to FTP/FTPS. SFTP is already encrypted via SSH and uses `privateKeyPath` / `passphrase` instead.
 
 ---
 
@@ -302,6 +358,7 @@ The status bar shows the current state:
 3. Enable `"debug": true` for detailed logs
 4. Check the Output Channel: `FTP Sync: Show Output Channel`
 5. For FTP: Try enabling `"secure": true` for FTPS
+6. For self-signed FTPS servers: either provide `secureOptions.caPath` or temporarily set `secureOptions.rejectUnauthorized` to `false`
 
 </details>
 

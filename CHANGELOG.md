@@ -5,6 +5,22 @@ Alle wichtigen Änderungen an diesem Projekt werden in dieser Datei dokumentiert
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt verwendet [Semantic Versioning](https://semver.org/lang/de/).
 
+## [1.1.5] - 2026-03-31
+
+### ✨ Hinzugefügt
+
+- **FTPS TLS Konfiguration**: Erweiterte TLS-Unterstützung für FTP-Verbindungen
+  - `secureOptions.rejectUnauthorized` für Zertifikatsprüfung
+  - Unterstützung für `caPath`, `certPath`, `keyPath` und TLS-Key-Passphrase
+  - Optionale TLS-Versionen, Ciphers, SNI und `secureProtocol`
+  - FTPS-Beispiele für Standard-, Custom- und Self-Signed-Setups
+
+### 📝 Dokumentation
+
+- README um FTPS/TLS-Konfiguration, Beispiele und Sicherheitshinweise erweitert
+- Generierte `.ftpsync.json` enthält jetzt einen dedizierten FTPS/TLS-Kommentarblock
+- Klarstellung ergänzt, dass `secure` nur für FTP/FTPS gilt und nicht für SFTP
+
 ## [1.1.4] - 2025-12-13
 
 ### 🔧 Behoben

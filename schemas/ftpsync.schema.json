@@ -117,16 +117,60 @@
         "secure": {
             "type": "boolean",
             "default": false,
-            "description": "Use FTPS (FTP over TLS) for FTP connections"
+            "description": "Use FTPS (FTP over TLS) for FTP connections only"
         },
         "secureOptions": {
             "type": "object",
-            "description": "TLS options for secure connections",
+            "description": "TLS options for FTPS connections (used when protocol is \"ftp\" and secure is true)",
             "properties": {
                 "rejectUnauthorized": {
                     "type": "boolean",
                     "default": true,
                     "description": "Reject unauthorized certificates"
+                },
+                "caPath": {
+                    "type": "string",
+                    "description": "Path to a CA certificate file"
+                },
+                "certPath": {
+                    "type": "string",
+                    "description": "Path to a client certificate file"
+                },
+                "keyPath": {
+                    "type": "string",
+                    "description": "Path to a client private key file"
+                },
+                "passphrase": {
+                    "type": "string",
+                    "description": "Passphrase for the encrypted client private key"
+                },
+                "minVersion": {
+                    "type": "string",
+                    "enum": [
+                        "TLSv1.2",
+                        "TLSv1.3"
+                    ],
+                    "description": "Minimum TLS version"
+                },
+                "maxVersion": {
+                    "type": "string",
+                    "enum": [
+                        "TLSv1.2",
+                        "TLSv1.3"
+                    ],
+                    "description": "Maximum TLS version"
+                },
+                "ciphers": {
+                    "type": "string",
+                    "description": "OpenSSL cipher list"
+                },
+                "servername": {
+                    "type": "string",
+                    "description": "TLS server name indication (SNI)"
+                },
+                "secureProtocol": {
+                    "type": "string",
+                    "description": "Explicit TLS protocol override for Node.js"
                 }
             }
         },

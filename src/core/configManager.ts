@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { FtpSyncConfig, mergeWithDefaults } from '../types';
-import { Logger, normalizePath, showInfoMessage, showSuccessMessage, showErrorMessage } from '../utils';
+import { Logger, showInfoMessage, showSuccessMessage, showErrorMessage } from '../utils';
 
 const CONFIG_FILENAME = '.ftpsync.json';
 const CONFIG_DIR = '.vscode';
@@ -43,6 +43,21 @@ export class ConfigManager {
     }
 
     /**
+     * Resolve an optional config path relative to the workspace folder.
+     */
+    private resolveOptionalPath(folderPath: string, filePath?: string): string | undefined {
+        if (!filePath) {
+            return undefined;
+        }
+
+        if (path.isAbsolute(filePath)) {
+            return filePath;
+        }
+
+        return path.join(folderPath, filePath);
+    }
+
+    /**
      * Load all config files from workspace folders
      */
     private async loadAllConfigs(): Promise<void> {
@@ -79,6 +94,23 @@ export class ConfigManager {
                 config.localPath = path.join(folderPath, config.localPath);
             } else if (!config.localPath) {
                 config.localPath = folderPath;
+            }
+
+            // Resolve TLS file paths relative to workspace folder
+            if (config.secureOptions) {
+                config.secureOptions.caPath = this.resolveOptionalPath(folderPath, config.secureOptions.caPath);
+                config.secureOptions.certPath = this.resolveOptionalPath(folderPath, config.secureOptions.certPath);
+                config.secureOptions.keyPath = this.resolveOptionalPath(folderPath, config.secureOptions.keyPath);
+
+                for (const tlsFilePath of [
+                    config.secureOptions.caPath,
+                    config.secureOptions.certPath,
+                    config.secureOptions.keyPath
+                ]) {
+                    if (tlsFilePath && !fs.existsSync(tlsFilePath)) {
+                        Logger.warn(`Configured TLS file not found: ${tlsFilePath}`);
+                    }
+                }
             }
 
             this.configs.set(folderPath, config);
@@ -381,7 +413,26 @@ export class ConfigManager {
     // "timeout": 30000,
 
     // FTP über TLS (FTPS) verwenden? (nur für protocol: "ftp")
-    // "secure": false,
+    "secure": false,
+
+    // TLS-Optionen für FTPS (nur für protocol: "ftp" relevant)
+    // "secureOptions": {
+    //     // Zertifikatsprüfung aktiviert lassen - nur für selbstsignierte Setups deaktivieren
+    //     "rejectUnauthorized": true,
+    //
+    //     // Optionale Zertifikatsdateien (relativ zum Workspace oder absolut)
+    //     // "caPath": ".certs/ca.pem",
+    //     // "certPath": ".certs/client-cert.pem",
+    //     // "keyPath": ".certs/client-key.pem",
+    //     // "passphrase": "",
+    //
+    //     // Optionale TLS-Feinabstimmung
+    //     // "minVersion": "TLSv1.2",
+    //     // "maxVersion": "TLSv1.3",
+    //     // "ciphers": "TLS_AES_256_GCM_SHA384:TLS_AES_128_GCM_SHA256",
+    //     // "servername": "ftp.example.com",
+    //     // "secureProtocol": "TLS_method"
+    // },
 
     // Debug-Modus für ausführliche Logs aktivieren?
     "debug": false

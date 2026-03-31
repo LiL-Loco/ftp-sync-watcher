@@ -1,6 +1,7 @@
 import * as ftp from 'basic-ftp';
 import * as fs from 'fs';
 import * as path from 'path';
+import type { ConnectionOptions } from 'tls';
 import { FtpSyncConfig } from '../types';
 import { Logger, normalizePath, getParentDir } from '../utils';
 import { RemoteClient, TransferResult, RemoteFileInfo } from './remoteClient';
@@ -20,9 +21,70 @@ export class FtpClient extends RemoteClient {
         }
     }
 
+    private buildSecureOptions(): ConnectionOptions | undefined {
+        if (!this.config.secure) {
+            return undefined;
+        }
+
+        const secureOptions = this.config.secureOptions;
+        if (!secureOptions) {
+            return undefined;
+        }
+
+        const tlsOptions: ConnectionOptions = {
+            rejectUnauthorized: secureOptions.rejectUnauthorized ?? true
+        };
+
+        if (secureOptions.caPath) {
+            tlsOptions.ca = fs.readFileSync(secureOptions.caPath);
+        }
+
+        if (secureOptions.certPath) {
+            tlsOptions.cert = fs.readFileSync(secureOptions.certPath);
+        }
+
+        if (secureOptions.keyPath) {
+            tlsOptions.key = fs.readFileSync(secureOptions.keyPath);
+        }
+
+        if (secureOptions.passphrase) {
+            tlsOptions.passphrase = secureOptions.passphrase;
+        }
+
+        if (secureOptions.minVersion) {
+            tlsOptions.minVersion = secureOptions.minVersion;
+        }
+
+        if (secureOptions.maxVersion) {
+            tlsOptions.maxVersion = secureOptions.maxVersion;
+        }
+
+        if (secureOptions.ciphers) {
+            tlsOptions.ciphers = secureOptions.ciphers;
+        }
+
+        if (secureOptions.servername) {
+            tlsOptions.servername = secureOptions.servername;
+        }
+
+        if (secureOptions.secureProtocol) {
+            tlsOptions.secureProtocol = secureOptions.secureProtocol;
+        }
+
+        return tlsOptions;
+    }
+
     async connect(): Promise<void> {
         try {
             Logger.info(`Connecting to FTP server ${this.config.host}:${this.config.port}...`);
+            const secureOptions = this.buildSecureOptions();
+
+            if (this.config.debug && this.config.secure) {
+                Logger.debug(
+                    `FTPS enabled (rejectUnauthorized=${secureOptions?.rejectUnauthorized ?? true}, ` +
+                    `ca=${Boolean(secureOptions?.ca)}, cert=${Boolean(secureOptions?.cert)}, key=${Boolean(secureOptions?.key)})`
+                );
+            }
             
             await this.client.access({
                 host: this.config.host,
@@ -30,7 +92,7 @@ export class FtpClient extends RemoteClient {
                 user: this.config.username,
                 password: this.config.password,
                 secure: this.config.secure,
-                secureOptions: this.config.secureOptions
+                secureOptions
             });
             
             this.connected = true;

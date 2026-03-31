@@ -12,7 +12,16 @@ export interface WatcherConfig {
 }
 
 export interface SecureOptions {
-    rejectUnauthorized: boolean;
+    rejectUnauthorized?: boolean;
+    caPath?: string;
+    certPath?: string;
+    keyPath?: string;
+    passphrase?: string;
+    minVersion?: 'TLSv1.2' | 'TLSv1.3';
+    maxVersion?: 'TLSv1.2' | 'TLSv1.3';
+    ciphers?: string;
+    servername?: string;
+    secureProtocol?: string;
 }
 
 export interface FtpSyncConfig {
@@ -55,6 +64,9 @@ export const DEFAULT_CONFIG: Partial<FtpSyncConfig> = {
     ],
     useGitIgnore: true,
     secure: false,
+    secureOptions: {
+        rejectUnauthorized: true
+    },
     timeout: 30000,
     concurrency: 3,
     debug: false
@@ -73,6 +85,11 @@ export function mergeWithDefaults(config: Partial<FtpSyncConfig>): FtpSyncConfig
     // Merge watcher config
     if (config.watcher) {
         merged.watcher = { ...DEFAULT_CONFIG.watcher, ...config.watcher } as WatcherConfig;
+    }
+
+    // Merge secure options
+    if (config.secureOptions) {
+        merged.secureOptions = { ...DEFAULT_CONFIG.secureOptions, ...config.secureOptions } as SecureOptions;
     }
     
     // Set default port based on protocol

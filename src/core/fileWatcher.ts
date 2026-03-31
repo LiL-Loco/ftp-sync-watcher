@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { FtpSyncConfig } from '../types';
-import { Logger, normalizePath, getRelativePath, localToRemotePath } from '../utils';
+import { Logger, getRelativePath, localToRemotePath } from '../utils';
 import { IgnoreHandler } from './ignoreHandler';
 import { ConnectionPool } from './connectionPool';
 import { OperationQueue } from './operationQueue';
@@ -301,7 +301,7 @@ export class FileWatcher {
                 async (client) => {
                     switch (type) {
                         case 'created':
-                        case 'changed':
+                        case 'changed': {
                             // Check if it's a directory
                             const fs = await import('fs');
                             const stats = fs.statSync(uri.fsPath);
@@ -322,6 +322,7 @@ export class FileWatcher {
                                 }
                             }
                             break;
+                        }
                         case 'deleted':
                             try {
                                 await client.deleteFile(remotePath);

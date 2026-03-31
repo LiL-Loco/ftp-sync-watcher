@@ -55,7 +55,7 @@ function showTemporaryMessage(
             title: message,
             cancellable: false
         },
-        async (progress) => {
+        async (_progress) => {
             // Show for the specified duration
             await new Promise<void>((resolve) => {
                 setTimeout(() => {

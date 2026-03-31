@@ -115,7 +115,6 @@ export class StatusBar {
      * Show a temporary message
      */
     public showMessage(message: string, duration = 3000): void {
-        const originalText = this.statusBarItem.text;
         this.statusBarItem.text = `$(cloud) ${message}`;
         
         setTimeout(() => {
