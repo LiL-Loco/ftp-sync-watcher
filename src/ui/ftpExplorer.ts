@@ -6,7 +6,7 @@ import { FtpSyncProfile } from '../types';
 import { FtpClient } from '../clients/ftpClient';
 import { SftpClientWrapper } from '../clients/sftpClient';
 import { RemoteClient, RemoteFileInfo } from '../clients/remoteClient';
-import { Logger, showInfoMessage, showSuccessMessage, showWarningMessage, showErrorMessage, withFolderProgress, withFileProgress } from '../utils';
+import { Logger, showInfoMessage, showSuccessMessage, showWarningMessage, showErrorMessage, withFolderProgress, withFileProgress, resolveSafeLocalPath } from '../utils';
 
 /**
  * Tree item for FTP Explorer
@@ -350,36 +350,18 @@ export class FtpExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
         }
 
         try {
-            // Lokaler Basispfad (Workspace + Profile-localPath) — Aufloesung
-            // passiert EINMAL hier, damit spaeter die Boundary-Pruefung
-            // gegen einen aufgeloesten absoluten Pfad laufen kann.
+            // Lokaler Basispfad (Workspace + Profile-localPath).
             const basePath = path.isAbsolute(this.profile.localPath || '.')
                 ? this.profile.localPath
                 : path.join(this.workspacePath, this.profile.localPath || '.');
 
-            // Pfad-Traversal-Schutz: '../'-Segmente werden explizit
-            // abgelehnt, bevor path.join ueberhaupt aufgerufen wird. Ein
-            // bösartiger Server oder Cache-Poisoning koennte sonst mit
-            // item.remotePath = "/var/www/../../etc/passwd" aus dem
-            // BasePath ausbrechen.
-            const segments = item.remotePath
-                .replace(/\\/g, '/')
-                .split('/')
-                .filter(p => p && p !== '.' && p !== '..');
-
-            const relativePath = segments.join(path.sep);
-            const localPath = path.join(basePath, relativePath);
-
-            // Boundary-Check: das aufgeloeste Ziel MUSS unter basePath liegen.
-            // Verwendet path.resolve, um etwaige '..'-Reste, die der
-            // Filter oben durchlassen wuerde (z.B. encoded Unicode),
-            // ebenfalls zu neutralisieren.
-            const resolvedLocal = path.resolve(localPath);
-            const resolvedBase = path.resolve(basePath);
-            if (!resolvedLocal.startsWith(resolvedBase + path.sep) &&
-                resolvedLocal !== resolvedBase) {
-                throw new Error(`Path traversal blocked: ${item.remotePath} -> ${resolvedLocal}`);
-            }
+            // Konsolidierter Path-Traversal-Schutz (siehe resolveSafeLocalPath).
+            const localPath = resolveSafeLocalPath(
+                item.remotePath,
+                this.profile.remotePath,
+                basePath
+            );
+            const relativePath = path.relative(basePath, localPath);
 
             Logger.info(`Download: remotePath="${item.remotePath}", relativePath="${relativePath}", localPath="${localPath}"`);
 

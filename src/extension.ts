@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { ConfigManager } from './core';
+import { ConfigManager, SecretManager, TombstoneStore } from './core';
 import { CommandHandler } from './commands';
 import { StatusBar, FtpExplorerProvider, FtpTreeItem } from './ui';
 import { Logger, showErrorMessage } from './utils';
@@ -8,6 +8,7 @@ let configManager: ConfigManager;
 let commandHandler: CommandHandler;
 let statusBar: StatusBar;
 let ftpExplorer: FtpExplorerProvider;
+let secretManager: SecretManager;
 
 /**
  * Extension activation
@@ -25,8 +26,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         // Always show status bar
         statusBar.show();
 
-        // Initialize config manager
-        configManager = new ConfigManager();
+        // Initialize config manager with secret storage
+        secretManager = SecretManager.fromContext(context);
+        configManager = new ConfigManager(secretManager);
         await configManager.initialize();
         context.subscriptions.push({ dispose: () => configManager.dispose() });
 
@@ -41,7 +43,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         }
 
         // Initialize command handler
-        commandHandler = new CommandHandler(configManager, statusBar);
+        commandHandler = new CommandHandler(configManager, statusBar, {
+            tombstoneStoreFactory: (workspacePath, profileName) =>
+                new TombstoneStore(context.globalState, workspacePath, profileName)
+        });
         commandHandler.registerCommands(context);
         context.subscriptions.push({ dispose: () => commandHandler.dispose() });
 
@@ -61,7 +66,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             vscode.commands.registerCommand('ftpSync.refreshExplorer', () => ftpExplorer.refresh()),
             vscode.commands.registerCommand('ftpSync.navigateUp', () => ftpExplorer.navigateUp()),
             vscode.commands.registerCommand('ftpSync.downloadRemoteFile', (item: FtpTreeItem) => ftpExplorer.downloadItem(item)),
-            vscode.commands.registerCommand('ftpSync.deleteRemoteFile', (item: FtpTreeItem) => ftpExplorer.deleteItem(item))
+            vscode.commands.registerCommand('ftpSync.deleteRemoteFile', (item: FtpTreeItem) => ftpExplorer.deleteItem(item)),
+            vscode.commands.registerCommand('ftpSync.clearCredentials', () => clearStoredCredentials())
         );
 
         // Setup upload on save handler
@@ -117,10 +123,82 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
  */
 export async function deactivate(): Promise<void> {
     Logger.info('FTP Sync Watcher extension deactivating...');
-    
+
     if (commandHandler) {
         await commandHandler.dispose();
     }
-    
+
     Logger.info('FTP Sync Watcher extension deactivated');
+}
+
+/**
+ * Interaktives Loeschen gespeicherter Credentials. Erkennt die Profile des
+ * aktuellen Workspaces und bietet sie als QuickPick an. Pro Profil werden
+ * Passwort + Passphrase geloescht.
+ */
+async function clearStoredCredentials(): Promise<void> {
+    if (!configManager || !secretManager) {
+        return;
+    }
+
+    const allProfiles = configManager.getAllProfiles();
+    if (allProfiles.size === 0) {
+        void vscode.window.showInformationMessage('FTP Sync: Keine Profile gefunden.');
+        return;
+    }
+
+    // QuickPick-Items und parallel die Composite-Keys merken, damit wir
+    // beim Auswaehlen sauber zurueck auf den originalen Schluessel mappen.
+    const entries: Array<{ key: string; folder: string; name: string; item: vscode.QuickPickItem }> = [];
+    for (const [key, profile] of allProfiles.entries()) {
+        const sepIdx = key.indexOf('|');
+        if (sepIdx < 0) continue;
+        const folder = key.slice(0, sepIdx);
+        const name = key.slice(sepIdx + 1);
+        entries.push({
+            key,
+            folder,
+            name,
+            item: {
+                label: `$(key) ${profile.name || name}`,
+                description: `Workspace: ${folder}`,
+                detail: `Loescht Passwort + Passphrase fuer Profil "${name}"`
+            }
+        });
+    }
+
+    const picked = await vscode.window.showQuickPick(
+        entries.map(e => e.item),
+        {
+            placeHolder: 'Welches Profil soll seine gespeicherten Credentials verlieren?'
+        }
+    );
+
+    if (!picked) {
+        return;
+    }
+
+    const selected = entries.find(e => e.item === picked);
+    if (!selected) {
+        return;
+    }
+
+    const confirm = await vscode.window.showWarningMessage(
+        `Gespeicherte Credentials fuer Profil "${selected.name}" wirklich loeschen?`,
+        { modal: true },
+        'Loeschen'
+    );
+
+    if (confirm !== 'Loeschen') {
+        return;
+    }
+
+    await secretManager.clearProfileSecrets(selected.folder, selected.name);
+    // Profile-Map neu laden, damit das secret-derived Passwort aus dem
+    // In-Memory-Cache faellt.
+    await configManager.loadConfigForFolder(selected.folder);
+
+    void vscode.window.showInformationMessage(
+        `FTP Sync: Credentials fuer Profil "${selected.name}" geloescht.`
+    );
 }

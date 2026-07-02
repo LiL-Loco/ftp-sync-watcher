@@ -127,6 +127,11 @@
         "command": "ftpSync.deleteRemoteFile",
         "title": "Delete",
         "icon": "$(trash)"
+      },
+      {
+        "command": "ftpSync.clearCredentials",
+        "title": "FTP Sync: Clear Stored Credentials",
+        "icon": "$(key)"
       }
     ],
     "menus": {
@@ -237,7 +242,8 @@
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src --ext ts",
     "test:unit": "npm run compile && mocha",
-    "test": "vscode-test"
+    "test:integration": "vscode-test",
+    "test": "npm run test:unit"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.6",
@@ -255,7 +261,7 @@
   },
   "dependencies": {
     "@eslint/eslintrc": "^3.3.5",
-    "basic-ftp": "^5.0.4",
+    "basic-ftp": "^6.0.1",
     "ignore": "^5.3.0",
     "ssh2": "^1.15.0",
     "ssh2-sftp-client": "^9.1.0",

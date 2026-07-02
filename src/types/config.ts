@@ -8,6 +8,8 @@
  * direction: 'bidirectional'-Feld.
  */
 
+import * as path from 'path';
+
 export type Protocol = 'ftp' | 'sftp';
 
 /**
@@ -23,6 +25,13 @@ export interface WatcherConfig {
     files: string | false;
     autoUpload: boolean;
     autoDelete: boolean;
+    /**
+     * Polling-Intervall in Millisekunden fuer Profile mit
+     * direction: 'remoteToLocal'. Bestimmt, wie oft der Watcher das
+     * Remote-Verzeichnis listet und mit dem lokalen State abgleicht.
+     * Default: 30000 (30 Sekunden).
+     */
+    pollIntervalMs?: number;
 }
 
 export interface SecureOptions {
@@ -112,6 +121,20 @@ export const DEFAULT_PROFILE: Partial<FtpSyncProfile> = {
  */
 export const LEGACY_MIGRATION_PROFILE_NAME = 'default';
 
+/**
+ * Ablaufzeit eines Tombstones. Sieben Tage reichen, damit ein Roundtrip
+ * (lokal loeschen → naechster Remote-Pull → Datei waere zurueck) sicher
+ * abgefangen wird, ohne dass dauerhaft Speicher fuer alte Loeschungen
+ * liegen bleibt.
+ */
+export const TOMBSTONE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Default-Polling-Intervall fuer remoteToLocal-Profile in Millisekunden.
+ * Wird verwendet, wenn watcher.pollIntervalMs nicht gesetzt ist.
+ */
+export const DEFAULT_POLL_INTERVAL_MS = 30000;
+
 export function getDefaultPort(protocol: Protocol, secure: boolean): number {
     if (protocol === 'sftp') {
         return 22;
@@ -175,4 +198,57 @@ export function migrateLegacyConfig(rawObject: unknown): FtpSyncConfigFile {
     }
 
     return { profiles: [legacyProfile as FtpSyncProfile] };
+}
+
+/**
+ * Pure-Subset der Pfad-Aufloesung aus ConfigManager.prepareProfile. Loest
+ * relative lokale Pfade und TLS-Pfade gegen den Workspace-Folder auf.
+ *
+ * Diese Funktion ist bewusst pure (keine vscode-Imports, kein fs-Zugriff,
+ * kein Logging) — sie ist der Refactoring-Schutz fuer
+ * `ConfigManager.prepareProfile` und in `prepareProfile.test.ts` direkt
+ * testbar.
+ *
+ * Verhalten:
+ *   - leerer `localPath`  → `folderPath` (Workspace-Root)
+ *   - relativer `localPath` → `path.join(folderPath, localPath)`
+ *   - absoluter `localPath` → bleibt unveraendert
+ *   - TLS-Pfade: ebenfalls relativ zu folderPath, falls nicht absolut
+ *   - Existenz-Pruefung der TLS-Dateien ist NICHT Teil dieser Funktion;
+ *     der ConfigManager warnt separat und schreibt es nicht in das
+ *     Profil-Objekt.
+ */
+export function resolveProfilePaths(
+    folderPath: string,
+    merged: FtpSyncProfile
+): FtpSyncProfile {
+    let resolvedLocalPath: string;
+    if (merged.localPath && !path.isAbsolute(merged.localPath)) {
+        resolvedLocalPath = path.join(folderPath, merged.localPath);
+    } else if (!merged.localPath) {
+        resolvedLocalPath = folderPath;
+    } else {
+        resolvedLocalPath = merged.localPath;
+    }
+
+    let resolvedSecureOptions = merged.secureOptions;
+    if (merged.secureOptions) {
+        const resolveOne = (p?: string): string | undefined => {
+            if (!p) return p;
+            if (path.isAbsolute(p)) return p;
+            return path.join(folderPath, p);
+        };
+        resolvedSecureOptions = {
+            ...merged.secureOptions,
+            caPath: resolveOne(merged.secureOptions.caPath),
+            certPath: resolveOne(merged.secureOptions.certPath),
+            keyPath: resolveOne(merged.secureOptions.keyPath)
+        };
+    }
+
+    return {
+        ...merged,
+        localPath: resolvedLocalPath,
+        secureOptions: resolvedSecureOptions
+    };
 }

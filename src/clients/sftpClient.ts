@@ -68,6 +68,31 @@ export class SftpClientWrapper extends RemoteClient {
 
     /**
      * Check if connected - override to check actual client state
+     *
+     * ACHTUNG — Intern-Cast:
+     * Dieser Cast (`client.client._sock.readable`) greift durch drei
+     * private Klassen in die ssh2-Bibliothek hinein:
+     *   ssh2-sftp-client@9.1.0
+     *     -> SftpClient.client          (privat, der interne ssh2.Client)
+     *       -> ssh2.Client._sock        (privat, das TCP-Socket)
+     *         -> Socket.readable        (boolean)
+     *
+     * Wenn ssh2-sftp-client ein Major- oder Minor-Upgrade bekommt und
+     * eins dieser Felder umbenennt, faellt dieser Cast still auf den
+     * `this.connected`-Cache-Flag zurueck und wir verpassen Disconnects
+     * bis der naechste Operation fehlschlaegt.
+     *
+     * Vor jedem Upgrade von ssh2-sftp-client:
+     *   1. Im Dev-Host manuell `isConnected()`-Pfad ueber alle Sync-Pfade
+     *      testen (Upload, Download, Reconnect nach Netzwerk-Drop).
+     *   2. Upstream-Issue 'isConnected() public API' beobachten —
+     *      sobald es eine oeffentliche Methode gibt, diesen Cast
+     *      ersetzen (siehe TODO in den Tests `sftpClient.test.ts` falls
+     *      vorhanden).
+     *
+     * Wir behalten den Cast, weil `fastGet`/`fastPut` einen teuren
+     * Round-Trip pro Aufruf verursachen wuerden, nur um den Status zu
+     * pruefen — und das mehrfach pro Sync-Cycle.
      */
     isConnected(): boolean {
         if (!this.connected) {

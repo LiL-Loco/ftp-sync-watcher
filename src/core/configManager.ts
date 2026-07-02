@@ -5,9 +5,11 @@ import {
     FtpSyncProfile,
     FtpSyncConfigFile,
     migrateLegacyConfig,
-    mergeProfileWithDefaults
+    mergeProfileWithDefaults,
+    resolveProfilePaths
 } from '../types';
 import { Logger, showInfoMessage, showSuccessMessage, showErrorMessage, resolveProfileByLongestPrefix } from '../utils';
+import { SecretManager } from './secretManager';
 
 const CONFIG_FILENAME = '.ftpsync.json';
 const CONFIG_DIR = '.vscode';
@@ -26,8 +28,22 @@ export class ConfigManager {
     private profiles: Map<string, Map<string, FtpSyncProfile>> = new Map();
     private configWatchers: vscode.FileSystemWatcher[] = [];
     private watcherDisposables: vscode.Disposable[] = [];
+    private secretManager: SecretManager | undefined;
 
-    constructor() {}
+    constructor(secretManager?: SecretManager) {
+        // secretManager ist optional, damit Tests und Aufrufer, die keine
+        // Secret-Aufloesung brauchen (z.B. Legacy-Code-Pfade), den
+        // ConfigManager ohne ihn instanziieren koennen.
+        this.secretManager = secretManager;
+    }
+
+    /**
+     * Erlaubt das spaetere Setzen des SecretManagers (z.B. wenn der
+     * ExtensionContext erst nach der Initialisierung verfuegbar ist).
+     */
+    public setSecretManager(secretManager: SecretManager): void {
+        this.secretManager = secretManager;
+    }
 
     /**
      * Initialisiert den ConfigManager und laedt alle Konfigurationen.
@@ -63,22 +79,6 @@ export class ConfigManager {
      */
     private getConfigPath(folderPath: string): string {
         return path.join(folderPath, CONFIG_DIR, CONFIG_FILENAME);
-    }
-
-    /**
-     * Loest einen optionalen Pfad (z.B. TLS-Zertifikate) gegen den Workspace-
-     * Folder auf.
-     */
-    private resolveOptionalPath(folderPath: string, filePath?: string): string | undefined {
-        if (!filePath) {
-            return undefined;
-        }
-
-        if (path.isAbsolute(filePath)) {
-            return filePath;
-        }
-
-        return path.join(folderPath, filePath);
     }
 
     /**
@@ -131,7 +131,8 @@ export class ConfigManager {
 
             const profileMap = new Map<string, FtpSyncProfile>();
             for (const rawProfile of configFile.profiles) {
-                const profile = this.prepareProfile(folderPath, rawProfile);
+                const prepared = this.prepareProfile(folderPath, rawProfile);
+                const profile = await this.resolveSecrets(folderPath, prepared);
                 profileMap.set(profile.name, profile);
             }
 
@@ -150,34 +151,21 @@ export class ConfigManager {
      * Wendet Defaults an, loest relative Pfade auf und prueft TLS-Pfade.
      * Liefert eine NEUE Profil-Instanz; der uebergebene rawProfile bleibt
      * unveraendert (Immutability-Garantie fuer Aufrufer und Tests).
+     *
+     * Die Pfad-Aufloesung ist nach `resolveProfilePaths` (types/config.ts)
+     * extrahiert — so kann sie in Unit-Tests ohne vscode-Mock verifiziert
+     * werden. Hier kommt nur noch der vscode-spezifische Teil dazu:
+     * Existenz-Pruefung der TLS-Dateien mit anschliessendem Warn-Log.
      */
     private prepareProfile(folderPath: string, rawProfile: Partial<FtpSyncProfile>): FtpSyncProfile {
         const merged = mergeProfileWithDefaults(rawProfile);
+        const resolved = resolveProfilePaths(folderPath, merged);
 
-        // Lokaler Pfad wird gegen den Workspace-Folder aufgeloest.
-        let resolvedLocalPath: string;
-        if (merged.localPath && !path.isAbsolute(merged.localPath)) {
-            resolvedLocalPath = path.join(folderPath, merged.localPath);
-        } else if (!merged.localPath) {
-            resolvedLocalPath = folderPath;
-        } else {
-            resolvedLocalPath = merged.localPath;
-        }
-
-        // TLS-Dateien ebenfalls relativ aufloesen und Existenz pruefen.
-        let resolvedSecureOptions = merged.secureOptions;
-        if (merged.secureOptions) {
-            resolvedSecureOptions = {
-                ...merged.secureOptions,
-                caPath: this.resolveOptionalPath(folderPath, merged.secureOptions.caPath),
-                certPath: this.resolveOptionalPath(folderPath, merged.secureOptions.certPath),
-                keyPath: this.resolveOptionalPath(folderPath, merged.secureOptions.keyPath)
-            };
-
+        if (resolved.secureOptions) {
             for (const tlsFilePath of [
-                resolvedSecureOptions.caPath,
-                resolvedSecureOptions.certPath,
-                resolvedSecureOptions.keyPath
+                resolved.secureOptions.caPath,
+                resolved.secureOptions.certPath,
+                resolved.secureOptions.keyPath
             ]) {
                 if (tlsFilePath && !fs.existsSync(tlsFilePath)) {
                     Logger.warn(`Configured TLS file not found: ${tlsFilePath}`);
@@ -185,11 +173,60 @@ export class ConfigManager {
             }
         }
 
-        return {
-            ...merged,
-            localPath: resolvedLocalPath,
-            secureOptions: resolvedSecureOptions
-        };
+        return resolved;
+    }
+
+    /**
+     * Loest Klartext-Passwoerter gegen SecretStorage auf. Wenn weder Klartext
+     * noch Secret vorhanden sind, bleibt das Passwort undefined — der
+     * CommandHandler fordert es dann per InputBox an.
+     *
+     * Klartext-Fallback: Wenn ein Klartext-Passwort im JSON steht, wird es
+     * benutzt, aber es wird EINE Warnung pro Profil in den Output-Channel
+     * geschrieben. So bleibt die Migration bestehender Configs funktional,
+     * aber der User sieht den Hinweis.
+     */
+    private async resolveSecrets(
+        folderPath: string,
+        profile: FtpSyncProfile
+    ): Promise<FtpSyncProfile> {
+        if (!this.secretManager) {
+            // Ohne SecretManager: keine Aufloesung, Profile wird 1:1
+            // durchgereicht (alter Pfad, fuer Tests).
+            return profile;
+        }
+
+        const updates: Partial<FtpSyncProfile> = {};
+        const hasKlartextPassword = typeof profile.password === 'string' && profile.password.length > 0;
+        const hasKlartextPassphrase = typeof profile.passphrase === 'string' && profile.passphrase.length > 0;
+
+        // Passwort
+        if (hasKlartextPassword) {
+            Logger.warn(
+                `Profile "${profile.name}" enthaelt ein Klartext-Passwort. ` +
+                `Bitte das password-Feld leeren — das Plugin fordert das Passwort ` +
+                `beim ersten Verbindungsaufbau per Eingabe ab und speichert es sicher.`
+            );
+        } else {
+            const secretPassword = await this.secretManager.getSecret(folderPath, profile.name, 'password');
+            if (secretPassword) {
+                updates.password = secretPassword;
+            }
+        }
+
+        // Passphrase (SSH-Key + TLS-Key)
+        if (!hasKlartextPassphrase) {
+            const secretPassphrase = await this.secretManager.getSecret(folderPath, profile.name, 'passphrase');
+            if (secretPassphrase) {
+                updates.passphrase = secretPassphrase;
+            }
+        }
+
+        if (Object.keys(updates).length === 0) {
+            return profile;
+        }
+
+        return { ...profile, ...updates };
     }
 
     /**

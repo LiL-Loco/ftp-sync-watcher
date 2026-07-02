@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { ConfigManager, FileWatcher } from '../core';
+import { ConfigManager, FileWatcher, TombstoneStore } from '../core';
 import { StatusBar } from '../ui';
 import { FtpSyncProfile } from '../types';
 import { Logger, getRelativePath, localToRemotePath, showInfoMessage, showSuccessMessage, showWarningMessage, showErrorMessage, withFileProgress, withFolderProgress } from '../utils';
@@ -14,10 +14,18 @@ export class CommandHandler {
     private watchers: Map<string, FileWatcher> = new Map();
     private watcherPromises: Map<string, Promise<FileWatcher>> = new Map();
     private statusBar: StatusBar;
+    private tombstoneStoreFactory?: (workspacePath: string, profileName: string) => TombstoneStore | undefined;
 
-    constructor(configManager: ConfigManager, statusBar: StatusBar) {
+    constructor(
+        configManager: ConfigManager,
+        statusBar: StatusBar,
+        options: {
+            tombstoneStoreFactory?: (workspacePath: string, profileName: string) => TombstoneStore | undefined;
+        } = {}
+    ) {
         this.configManager = configManager;
         this.statusBar = statusBar;
+        this.tombstoneStoreFactory = options.tombstoneStoreFactory;
     }
 
     public registerCommands(context: vscode.ExtensionContext): void {
@@ -233,7 +241,12 @@ export class CommandHandler {
             }
 
             try {
-                const watcher = new FileWatcher(folder.uri.fsPath, profiles);
+                const watcher = new FileWatcher(folder.uri.fsPath, profiles, {
+                    tombstoneStoreFactory: (profileName) =>
+                        this.tombstoneStoreFactory
+                            ? this.tombstoneStoreFactory(folder.uri.fsPath, profileName)
+                            : undefined
+                });
 
                 watcher.onChange((event) => {
                     this.statusBar.showSyncing();
@@ -392,7 +405,12 @@ export class CommandHandler {
             if (profiles.size === 0) {
                 throw new Error(`No profiles for workspace ${workspacePath}`);
             }
-            const watcher = new FileWatcher(workspacePath, profiles);
+            const watcher = new FileWatcher(workspacePath, profiles, {
+                tombstoneStoreFactory: (profileName) =>
+                    this.tombstoneStoreFactory
+                        ? this.tombstoneStoreFactory(workspacePath, profileName)
+                        : undefined
+            });
             this.watchers.set(workspacePath, watcher);
             return watcher;
         })();
