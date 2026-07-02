@@ -13,7 +13,7 @@ dist/
 # Dependencies
 # ─────────────────────────────────────────────────────────────────────────────
 node_modules/
-package-lock.json
+# package-lock.json wird seit v2.0.0 committed — `npm ci` fuer reproduzierbare Builds.
 
 # ─────────────────────────────────────────────────────────────────────────────
 # VS Code Test

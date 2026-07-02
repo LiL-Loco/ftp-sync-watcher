@@ -9,17 +9,20 @@ VS Code extension **FTP/SFTP Sync Watcher** (`ftp-sync-watcher`, publisher `ThaL
 ## Build / Lint / Test Commands
 
 ```bash
-npm install              # one-time
-npm run compile          # tsc -p ./. → out/
-npm run watch            # tsc --watch for dev iteration
-npm run lint             # eslint src --ext ts
-npm run test:unit        # mocha — 19 unit tests in src/test/unit/
-npm test                 # vscode-test (compiles + lints first via pretest, expects ./out/test/suite/index)
+npm ci                  # reproducible install (package-lock.json ist committed seit v2.0.0)
+npm install             # lockfile-update Variante (npm ci bevorzugen)
+npm run compile         # tsc -p ./. → out/
+npm run watch           # tsc --watch for dev iteration
+npm run lint            # eslint src --ext ts
+npm run test:unit       # mocha — 57 unit tests in src/test/unit/
+npm test                # alias für npm run test:unit (früher vscode-test — Bug)
+npm run test:integration # vscode-test (Suite existiert noch nicht, vorbereitet)
 ```
 
 - Output goes to `out/` (committed-vs-ignored: `*.js`, `*.js.map`, `*.d.ts` are gitignored; `out/` is gitignored too).
 - `.vscode/launch.json` is already configured: **F5** launches an Extension Development Host with the prebuild task.
-- Unit tests live in `src/test/unit/` and are pure Node + mocha — they do **not** require the VS Code test host. Run `npm run test:unit` after `npm run compile`. `vscode-test` is reserved for future integration tests that need the real VS Code runtime.
+- Unit tests live in `src/test/unit/` and are pure Node + mocha — they do **not** require the VS Code test host. Run `npm run test:unit` after `npm run compile`. `vscode-test` (`test:integration`) is reserved for future integration tests that need the real VS Code runtime.
+- `npm test` ist seit v2.0.0 KEIN `vscode-test`-Aufruf mehr, sondern ein Alias für `npm run test:unit`. Hintergrund: `vscode-test` brach mit "Could not find a .vscode-test file" ab, sobald keine Suite existierte.
 - The icon generation helper `scripts/create-icon.js` is **not** a build step. Run only if the `media/icon.png` needs regenerating (`node scripts/create-icon.js`).
 
 ## High-Level Architecture
@@ -27,17 +30,20 @@ npm test                 # vscode-test (compiles + lints first via pretest, expe
 ```
 src/
 ├── extension.ts          # activate()/deactivate(), wires everything
-├── types/                # FtpSyncProfile, FtpSyncConfigFile, Direction, defaults
+├── types/                # FtpSyncProfile, FtpSyncConfigFile, Direction, defaults, resolveProfilePaths
 ├── clients/              # RemoteClient (abstract) + FtpClient (basic-ftp) + SftpClientWrapper (ssh2-sftp-client)
 ├── core/
-│   ├── configManager.ts  # loads/strips JSONC .vscode/.ftpsync.json, watches config files
-│   ├── fileWatcher.ts    # VS Code FileSystemWatcher + debounce + queue + active-uploads tracking
+│   ├── configManager.ts  # loads/strips JSONC .vscode/.ftpsync.json, watches config files, secret resolution
+│   ├── fileWatcher.ts    # VS Code FileSystemWatcher + debounce + queue + active-uploads tracking + polling-loop for remoteToLocal
 │   ├── connectionPool.ts # reconnect/backoff/530-rate-limit + operation mutex
 │   ├── operationQueue.ts # priority queue, retries, sequential processing
+│   ├── secretManager.ts  # VS-Code context.secrets wrapper (ftpSync.* namespace)
+│   ├── tombstoneStore.ts # globalState-basierte Loesch-Markierungen mit TTL (ADR-0002)
 │   └── ignoreHandler.ts  # combines .gitignore + custom glob patterns via `ignore` package
 ├── commands/             # CommandHandler — registers all `ftpSync.*` commands
 ├── ui/                   # StatusBar + FtpExplorerProvider (Activity Bar tree view)
-└── utils/                # Logger, pathUtils (localToRemotePath/remoteToLocalPath), notifications, progress
+├── utils/                # Logger, pathUtils (resolveSafeLocalPath/remoteToLocalPath), pathAdapters (vscode-touchpoints only), notifications, progress
+└── test/unit/            # mocha — pure-Function-Tests ohne vscode-Mock
 ```
 
 **Boot sequence** (`extension.ts`):
@@ -60,7 +66,10 @@ src/
 - **Default port** is computed via `getDefaultPort(protocol, secure)` → 22 SFTP, 21 FTP, 990 FTPS.
 - **Config file is JSONC**, not strict JSON. `ConfigManager.stripJsonComments` is a hand-rolled tokenizer that respects string boundaries and escape sequences. Do not replace it with a regex stripper — comments inside strings would break.
 - **`ConfigManager` is keyed by workspace folder fsPath**, then by profile name (`Map<string, Map<string, FtpSyncProfile>>`). Multi-root workspaces get one config per folder under `<folder>/.vscode/.ftpsync.json`, and each config holds an array of profiles under the `profiles` key. Legacy flat-object configs are silently migrated (see `migrateLegacyConfig` in `src/types/config.ts`). JSON schema is registered globally via `contributes.jsonValidation` for `**/.vscode/.ftpsync.json`.
-- **`Path handling`** — remote paths always use `/` (POSIX) regardless of host OS; `pathUtils.normalizePath` does the conversion. Local↔remote mapping goes through `localToRemotePath`/`remoteToLocalPath`. `remoteToLocalPath` rejects paths that resolve outside `remotePath` (security guard against `..` traversal in the explorer).
+- **`Path handling`** — remote paths always use `/` (POSIX) regardless of host OS; `pathUtils.normalizePath` does the conversion. Local↔remote mapping goes through `localToRemotePath`/`remoteToLocalPath`. **Sicherheits-kritische Pfad-Aufloesung** laeuft ueber `resolveSafeLocalPath()` in `src/utils/pathUtils.ts` — wirft hart fuer `..`-Segmente und fuer Pfade ausserhalb des `remoteBase`. Der FTP-Explorer nutzt diese Funktion ausschliesslich (kein inline-Check mehr).
+- **SecretStorage** — Klartext-Passwoerter in `.ftpsync.json` sind seit v2.0.0 deprecated. `SecretManager` (in `src/core/secretManager.ts`) liest aus `context.secrets`, schluesselt nach Schema `ftpSync.${workspaceFolder}.${profileName}.${password|passphrase}`. Klartext bleibt als Migrations-Fallback aktiv und erzeugt eine Warnung im Output-Channel. Profile ohne `password` und ohne Secret triggern eine InputBox bei `ftpSync.connect`. `ftpSync.clearCredentials` loescht Secrets explizit.
+- **Polling-Loop fuer `remoteToLocal`** — `FileWatcher` startet fuer Profile mit `direction: 'remoteToLocal'` einen `setInterval`-basierten Polling-Loop (`watcher.pollIntervalMs`, Default 30 s). Tombstones verhindern, dass lokal geloeschte Dateien durch den naechsten Pull wieder zurueckkehren. `bidirectional` ist noch nicht implementiert — die Werte werden akzeptiert, fuehren aber (noch) keine Transfers aus.
+- **`resolveProfilePaths` ist pure** — die Pfad-Aufloesung aus `ConfigManager.prepareProfile` wurde nach `types/config.ts` extrahiert, damit sie ohne vscode-Mock getestet werden kann. `prepareProfile.test.ts` verifiziert relativ/absolut/leer, TLS-Pfade und Immutability.
 - **`FtpExplorerProvider` keeps its own `RemoteClient`** (separate from `ConnectionPool`), so the explorer's connection is independent of the watcher's. The view is rooted at `config.remotePath` and "Go up" (`ftpSync.navigateUp`) is disabled at that root.
 - **`ConnectionPool.executeWithRetry`** is the single entry point for any remote op; it wraps the `operationMutex`, retries up to 3×, and triggers reconnection on connection-class errors (`isConnectionError` keyword list is the source of truth — extend it carefully).
 
@@ -68,18 +77,24 @@ src/
 
 - The CHANGELOG is the source of truth for shipped behavior. New bug fixes and features should append an entry following the existing German-language `### ✨/🔧/📝/🔒/⚠️` style and reference the affected config key or component.
 - Release artifacts (`ftp-sync-watcher-*.vsix`) are committed to the repo root for GitHub Releases — `.gitignore` excludes `*.vsix` only inside the working tree once the next release is cut. Don't mass-delete these.
-- Schema must stay in sync with `types/config.ts` (`DEFAULT_CONFIG`, `mergeWithDefaults`). The JSON schema in `schemas/ftpsync.schema.json` is what gives users IntelliSense — keep the descriptions accurate when adding fields.
-- `SftpClient.isConnected()` reflects on the underlying `ssh2` socket via a private field cast (`as unknown as { client?: { _sock?: ... } }`); if `ssh2-sftp-client` upgrades and renames internals, this check will silently fall back to the cached flag and miss disconnects.
+- Schema must stay in sync with `types/config.ts` (`DEFAULT_PROFILE`, `mergeProfileWithDefaults`). The JSON schema in `schemas/ftpsync.schema.json` is what gives users IntelliSense — keep the descriptions accurate when adding fields.
+- `SftpClient.isConnected()` reflects on the underlying `ssh2` socket via a private field cast (`as unknown as { client?: { _sock?: ... } }`); if `ssh2-sftp-client` upgrades and renames internals, this check will silently fall back to the cached flag and miss disconnects. Header-Kommentar in `src/clients/sftpClient.ts` beschreibt das Upgrade-Protokoll.
 - The user-facing default config template lives inline in `ConfigManager.createConfig(...)` as a template-literal string (German comments, box-drawing separators). Update it in lockstep with new config keys.
+- **`basic-ftp` auf v6.0.1 pinnen.** Vor jedem Bump: `npm audit` pruefen, Migrations-Bemerkungen lesen. v6 hat einen anderen Konstruktor (kein `timeout` mehr im Konstruktor — wird ueber `client.timeout(...)` gesetzt) und FTPS wurde zu `Client` mit `secure: true` zusammengefuehrt.
+- **`package-lock.json` ist seit v2.0.0 committed.** `npm ci` fuer CI und frische Checkouts; `npm install` nur, wenn Dependencies absichtlich aktualisiert werden sollen.
 
 ## Key Files
 
 - `src/extension.ts` — activation entry point
 - `src/core/connectionPool.ts` — connection lifecycle, mutex, rate limit, health checks
-- `src/core/fileWatcher.ts` — debounce + queue + active-upload coordination
-- `src/core/configManager.ts` — JSONC loading + config file watcher
+- `src/core/fileWatcher.ts` — debounce + queue + active-upload coordination + polling-loop for remoteToLocal
+- `src/core/configManager.ts` — JSONC loading + config file watcher + secret resolution
+- `src/core/secretManager.ts` — VS-Code `context.secrets` wrapper
+- `src/core/tombstoneStore.ts` — Loesch-Markierungen mit TTL (ADR-0002)
 - `src/clients/{ftpClient,sftpClient,remoteClient}.ts` — protocol implementations of `RemoteClient`
 - `src/commands/commandHandler.ts` — all `ftpSync.*` command handlers
 - `src/ui/{statusBar,ftpExplorer}.ts` — status bar + Activity Bar tree view
+- `src/utils/pathUtils.ts` — `resolveSafeLocalPath` ist die sicherheitskritische Pfad-Aufloesung
+- `src/utils/pathAdapters.ts` — vscode-Touchpoints (`getWorkspaceFolder`, `getWorkspaceFolders`)
 - `schemas/ftpsync.schema.json` — IntelliSense for `.ftpsync.json`
 - `package.json` — `contributes.*` (commands, views, menus, configuration, jsonValidation) and `scripts`

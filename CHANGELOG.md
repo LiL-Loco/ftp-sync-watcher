@@ -25,10 +25,26 @@ und dieses Projekt verwendet [Semantic Versioning](https://semver.org/lang/de/).
 ### 🔧 Behoben
 
 - Die heimliche, oft unnoetige Parallelisierung pro Pool ist weg — Operationen werden pro Profil seriell ausgefuehrt, was Verbindungsabbrueche und Race-Conditions reduziert.
+- **Path-Traversal-Schutz konsolidiert**: `resolveSafeLocalPath()` in `src/utils/pathUtils.ts` ersetzt die inline-Pruefung im FTP-Explorer. Wirft jetzt **konsistent** fuer `..`-Segmente und Pfade ausserhalb des `remoteBase` — vorher wurde `..` stillschweigend weggefiltert, was Angriffe wie `/workspace/../../etc/passwd` als gueltige `/workspace/etc/passwd`-Pfade akzeptiert haette. Tests in `pathUtils.test.ts` decken beide Faelle ab.
+- **basic-ftp CVEs behoben**: Migration auf `basic-ftp@^6.0.1` (Drop-in-Ersatz) schliesst 1 critical path-traversal in `downloadToDir`, 1 critical CRLF injection und 2 high DoS vulnerabilities. Verbleibende `npm audit --omit=dev`-Treffer: 0.
+- **`ssh2`-Internals-Cast dokumentiert**: Der `isConnected()`-Cast auf `_sock.readable` (ssh2-sftp-client@9.1.0) hat einen ausfuehrlichen Header bekommen, der das Upstream-Risiko bei ssh2-Upgrades benennt und den manuellen Test-Aufwand beschreibt.
+
+### ✨ Hinzugefügt
+
+- **SecretStorage-Integration**: `SecretManager` in `src/core/secretManager.ts` ersetzt Klartext-Passwoerter in `.ftpsync.json` durch VS-Code `context.secrets` (verschluesselte Speicherung). Profile koennen Passwoerter interaktiv ueber `ftpSync.connect` anfordern; Klartext-Passwoerter werden weiterhin toleriert, aber im Output-Channel mit Warnung markiert. Neuer Befehl `ftpSync.clearCredentials` loescht gespeicherte Secrets ueber eine Profil-Auswahl.
+- **`remoteToLocal`-Sync**: Profile mit `direction: 'remoteToLocal'` starten einen Polling-Loop (`watcher.pollIntervalMs`, Default 30 s), der das Remote-Verzeichnis listet, mit dem lokalen `fs`-State abgleicht und neue/geaenderte Dateien herunterlaedt. Vorbereitung fuer `bidirectional` (ADR-0002 / ADR-0003).
+- **Tombstones (ADR-0002)**: `TombstoneStore` in `src/core/tombstoneStore.ts` verhindert, dass lokal geloeschte Dateien in `remoteToLocal`-Profilen durch den naechsten Pull wieder zurueckkehren. 7-Tage-TTL, persistiert in `context.globalState`, gekapselt pro `(Workspace, Profil)`.
+
+### 🔒 Sicherheit
+
+- **`resolveSafeLocalPath`** akzeptiert nur noch Pfade, die explizit **innerhalb** des `remoteBase` liegen — Pfade ausserhalb der konfigurierten Remote-Wurzel werden hart abgelehnt.
+- **`SecretManager`** verwendet `context.secrets`, das die OS-spezifische Credential-Store (Windows Credential Manager, macOS Keychain, libsecret) nutzt. Klartext in JSON-Dateien ist nur noch ein dokumentierter Migrations-Fallback.
 
 ### 📝 Dokumentation
 
 - PRD in `docs/PRD-multi-profile.md` dokumentiert Architektur, Migrationsstrategie und das Verhalten der drei Retry-Schichten.
+- Schema-Felder `passwordSecretRef` (optionaler Hint) und `pollIntervalMs` in `schemas/ftpsync.schema.json` ergaenzt.
+- `CLAUDE.md` erweitert um Hinweise zu `npm ci` (reproduzierbare Builds ueber `package-lock.json`) und `test:integration`-Skript (vscode-test, derzeit ohne Suite).
 
 ## [1.1.5] - 2026-03-31
 
