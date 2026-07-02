@@ -1,4 +1,4 @@
-import { FtpSyncConfig } from '../types';
+import { FtpSyncProfile } from '../types';
 import { RemoteClient, createClient } from '../clients';
 import { Logger } from '../utils';
 
@@ -128,10 +128,32 @@ class GlobalConnectionManager {
 export const globalConnectionManager = GlobalConnectionManager.getInstance();
 
 /**
- * Manages connection pooling with automatic reconnection and health monitoring
+ * ConnectionPool ist die mittlere der drei Retry-/Serialisierungs-Schichten
+ * (siehe ADR-0001). Er traegt *ausschliesslich* folgende Verantwortlichkeiten:
+ *
+ *   1. Pro-Profil-Operations-Mutex — verhindert basis-ftp's
+ *      "User launched a task while another one is still running"-Fehler.
+ *   2. Pro-Profil Reconnect mit exponentiellem Backoff — ueberlebt kurze
+ *      Netzwerkstoerungen ohne den Caller zu betreffen.
+ *   3. Pro-Operation Retry mit Klassifikation der Fehler in
+ *      "connection error" (reconnect+retry), "rate limit" (60s-Pause ueber
+ *      globalConnectionManager) und "non-connection error" (sofortiger
+ *      Throw ohne Retry).
+ *
+ * Bewusst NICHT in diesem Layer:
+ *   - Cross-Pool-Slot-Allokation -> globalConnectionManager
+ *   - Sequencing / Priorisierung -> OperationQueue
+ *
+ * Diese Aufgabentrennung ermoeglicht es, spaeter eine der drei Schichten
+ * anzufassen, ohne die anderen mitzureissen. Konsolidierungsversuche wuerden
+ * die in ADR-0001 dokumentierten Ursprungsfehler re-derivieren.
+ *
+ * Hinweis: Ein ConnectionPool existiert seit v2.0.0 genau einmal pro
+ * Profil (nicht pro Workspace). Bei einem Workspace mit N Profilen gibt es
+ * N ConnectionPools mit jeweils eigenem Mutex und Retry-Budget.
  */
 export class ConnectionPool {
-    private config: FtpSyncConfig;
+    private config: FtpSyncProfile;
     private client: RemoteClient | null = null;
     private health: ConnectionHealth = 'disconnected';
     private reconnectAttempts = 0;
@@ -153,7 +175,7 @@ export class ConnectionPool {
         reject: (error: Error) => void;
     }> = [];
 
-    constructor(config: FtpSyncConfig) {
+    constructor(config: FtpSyncProfile) {
         this.config = config;
         this.operationTimeout = config.timeout || 30000;
     }

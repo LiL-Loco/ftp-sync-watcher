@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { ConfigManager } from '../core';
-import { FtpSyncConfig } from '../types';
+import { FtpSyncProfile } from '../types';
 import { FtpClient } from '../clients/ftpClient';
 import { SftpClientWrapper } from '../clients/sftpClient';
 import { RemoteClient, RemoteFileInfo } from '../clients/remoteClient';
@@ -133,7 +133,7 @@ export class FtpExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
     readonly onDidChangeTreeData: vscode.Event<vscode.TreeItem | undefined | null | void> = this._onDidChangeTreeData.event;
 
     private client: RemoteClient | undefined;
-    private config: FtpSyncConfig | undefined;
+    private profile: FtpSyncProfile | undefined;
     private workspacePath: string | undefined;
     private connectionStatus: 'disconnected' | 'connecting' | 'connected' | 'error' = 'disconnected';
     private errorMessage: string | undefined;
@@ -151,7 +151,9 @@ export class FtpExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
     }
 
     /**
-     * Connect to the FTP/SFTP server
+     * Connect to the FTP/SFTP server. Bei mehreren Profilen wird das erste
+     * Profil des ersten Workspace-Folders mit geladenen Profilen verwendet.
+     * Eine granularere Profil-Auswahl folgt in einem spaeteren Release.
      */
     public async connect(): Promise<void> {
         const workspaceFolders = vscode.workspace.workspaceFolders;
@@ -160,17 +162,16 @@ export class FtpExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
             return;
         }
 
-        // Get config for first workspace folder with config
         for (const folder of workspaceFolders) {
-            const config = this.configManager.getConfig(folder.uri.fsPath);
-            if (config) {
-                this.config = config;
+            const profiles = this.configManager.getProfilesForFolder(folder.uri.fsPath);
+            if (profiles && profiles.size > 0) {
+                this.profile = profiles.values().next().value;
                 this.workspacePath = folder.uri.fsPath;
                 break;
             }
         }
 
-        if (!this.config) {
+        if (!this.profile) {
             showWarningMessage('No FTP configuration found. Create one first.');
             this.refresh();
             return;
@@ -180,18 +181,17 @@ export class FtpExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
         this.refresh();
 
         try {
-            // Create appropriate client
-            if (this.config.protocol === 'sftp') {
-                this.client = new SftpClientWrapper(this.config);
+            if (this.profile.protocol === 'sftp') {
+                this.client = new SftpClientWrapper(this.profile);
             } else {
-                this.client = new FtpClient(this.config);
+                this.client = new FtpClient(this.profile);
             }
 
             await this.client.connect();
             this.connectionStatus = 'connected';
-            this.currentPath = this.config.remotePath;
-            Logger.success(`FTP Explorer connected to ${this.config.host}`);
-            showSuccessMessage(`Connected to ${this.config.name || this.config.host}`);
+            this.currentPath = this.profile.remotePath;
+            Logger.success(`FTP Explorer connected to ${this.profile.host} (profile "${this.profile.name}")`);
+            showSuccessMessage(`Connected to ${this.profile.name}`);
         } catch (error) {
             this.connectionStatus = 'error';
             this.errorMessage = (error as Error).message;
@@ -234,7 +234,7 @@ export class FtpExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
      * Navigate up one directory
      */
     public navigateUp(): void {
-        if (this.config && this.currentPath !== this.config.remotePath) {
+        if (this.profile && this.currentPath !== this.profile.remotePath) {
             this.currentPath = path.posix.dirname(this.currentPath);
             this.refresh();
         }
@@ -260,31 +260,26 @@ export class FtpExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
     async getChildren(element?: vscode.TreeItem): Promise<vscode.TreeItem[]> {
         // Root level
         if (!element) {
-            // Check if config exists - return empty array to show welcome content
-            if (!this.configManager.hasConfigs()) {
+            if (!this.configManager.hasProfiles()) {
                 return [];
             }
 
-            // Show connection status if not connected
             if (this.connectionStatus !== 'connected') {
                 return [new ConnectionStatusItem(
                     this.connectionStatus,
-                    this.config?.name || this.config?.host,
+                    this.profile?.name || this.profile?.host,
                     this.errorMessage
                 )];
             }
 
-            // Connected - show current path header and directory contents
             const items: vscode.TreeItem[] = [];
-            
-            // Add current path indicator
-            const canGoUp = this.config && this.currentPath !== this.config.remotePath;
+
+            const canGoUp = this.profile && this.currentPath !== this.profile.remotePath;
             items.push(new CurrentPathItem(this.currentPath, !!canGoUp));
-            
-            // Add directory contents
+
             const directoryItems = await this.listDirectory(this.currentPath);
             items.push(...directoryItems);
-            
+
             return items;
         }
 
@@ -349,30 +344,43 @@ export class FtpExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
      * Download a file or folder from the server
      */
     public async downloadItem(item: FtpTreeItem): Promise<void> {
-        if (!this.client || !this.config || !this.workspacePath) {
+        if (!this.client || !this.profile || !this.workspacePath) {
             showWarningMessage('Not connected');
             return;
         }
 
         try {
-            // Calculate relative path from remote root
-            let relativePath = item.remotePath;
-            if (relativePath.startsWith(this.config.remotePath)) {
-                relativePath = relativePath.substring(this.config.remotePath.length);
-            }
-            
-            // Remove leading slashes and any drive letters (C:, E:, etc.)
-            relativePath = relativePath.replace(/^[/\\]+/, '').replace(/^[a-zA-Z]:/, '');
-            
-            // Convert to platform-independent path and ensure it's relative
-            relativePath = relativePath.split(/[/\\]/).filter(p => p && p !== '.').join(path.sep);
-            
-            // Build absolute local path
-            const basePath = path.isAbsolute(this.config.localPath || '.')
-                ? this.config.localPath
-                : path.join(this.workspacePath, this.config.localPath || '.');
+            // Lokaler Basispfad (Workspace + Profile-localPath) — Aufloesung
+            // passiert EINMAL hier, damit spaeter die Boundary-Pruefung
+            // gegen einen aufgeloesten absoluten Pfad laufen kann.
+            const basePath = path.isAbsolute(this.profile.localPath || '.')
+                ? this.profile.localPath
+                : path.join(this.workspacePath, this.profile.localPath || '.');
+
+            // Pfad-Traversal-Schutz: '../'-Segmente werden explizit
+            // abgelehnt, bevor path.join ueberhaupt aufgerufen wird. Ein
+            // bösartiger Server oder Cache-Poisoning koennte sonst mit
+            // item.remotePath = "/var/www/../../etc/passwd" aus dem
+            // BasePath ausbrechen.
+            const segments = item.remotePath
+                .replace(/\\/g, '/')
+                .split('/')
+                .filter(p => p && p !== '.' && p !== '..');
+
+            const relativePath = segments.join(path.sep);
             const localPath = path.join(basePath, relativePath);
-            
+
+            // Boundary-Check: das aufgeloeste Ziel MUSS unter basePath liegen.
+            // Verwendet path.resolve, um etwaige '..'-Reste, die der
+            // Filter oben durchlassen wuerde (z.B. encoded Unicode),
+            // ebenfalls zu neutralisieren.
+            const resolvedLocal = path.resolve(localPath);
+            const resolvedBase = path.resolve(basePath);
+            if (!resolvedLocal.startsWith(resolvedBase + path.sep) &&
+                resolvedLocal !== resolvedBase) {
+                throw new Error(`Path traversal blocked: ${item.remotePath} -> ${resolvedLocal}`);
+            }
+
             Logger.info(`Download: remotePath="${item.remotePath}", relativePath="${relativePath}", localPath="${localPath}"`);
 
             if (item.isDirectory) {

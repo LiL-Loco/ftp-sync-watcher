@@ -1,14 +1,18 @@
 import * as vscode from 'vscode';
 import { ConfigManager, FileWatcher } from '../core';
 import { StatusBar } from '../ui';
+import { FtpSyncProfile } from '../types';
 import { Logger, getRelativePath, localToRemotePath, showInfoMessage, showSuccessMessage, showWarningMessage, showErrorMessage, withFileProgress, withFolderProgress } from '../utils';
 
 /**
- * Command handler for all FTP Sync commands
+ * Command-Handler fuer alle FTP-Sync-Kommandos. Verwaltet einen FileWatcher
+ * pro Workspace-Folder. Seit v2.0.0 bekommt der Watcher die vollstaendige
+ * Profil-Map eines Workspaces, nicht mehr ein einzelnes Config-Objekt.
  */
 export class CommandHandler {
     private configManager: ConfigManager;
     private watchers: Map<string, FileWatcher> = new Map();
+    private watcherPromises: Map<string, Promise<FileWatcher>> = new Map();
     private statusBar: StatusBar;
 
     constructor(configManager: ConfigManager, statusBar: StatusBar) {
@@ -16,9 +20,6 @@ export class CommandHandler {
         this.statusBar = statusBar;
     }
 
-    /**
-     * Register all commands
-     */
     public registerCommands(context: vscode.ExtensionContext): void {
         const commands = [
             vscode.commands.registerCommand('ftpSync.uploadFile', (uri?: vscode.Uri) => this.uploadFile(uri)),
@@ -35,30 +36,21 @@ export class CommandHandler {
         commands.forEach(cmd => context.subscriptions.push(cmd));
     }
 
-    /**
-     * Dispose all watchers
-     */
     public async dispose(): Promise<void> {
+        // Promises zuerst aufloesen, damit keine Race-Conditions mehr laufende
+        // Initialisierungen "ueberleben".
+        this.watcherPromises.clear();
         for (const watcher of this.watchers.values()) {
             await watcher.stop();
         }
         this.watchers.clear();
     }
 
-    /**
-     * Upload current file or specified file
-     */
     private async uploadFile(uri?: vscode.Uri): Promise<void> {
         const fileUri = uri || vscode.window.activeTextEditor?.document.uri;
-        
+
         if (!fileUri) {
             showWarningMessage('No file selected');
-            return;
-        }
-
-        const config = this.configManager.getConfigForUri(fileUri);
-        if (!config) {
-            showWarningMessage('No FTP configuration found for this workspace');
             return;
         }
 
@@ -67,17 +59,22 @@ export class CommandHandler {
             return;
         }
 
+        const profile = this.configManager.getProfileForUri(fileUri);
+        if (!profile) {
+            showWarningMessage('No FTP configuration found for this file');
+            return;
+        }
+
         this.statusBar.showSyncing();
 
         try {
-            // Get or create watcher, ensuring we reuse existing connections
-            const watcher = await this.getOrCreateWatcher(workspacePath, config);
+            const watcher = await this.getOrCreateWatcher(workspacePath);
 
             const fileName = getRelativePath(workspacePath, fileUri.fsPath);
             const success = await withFileProgress(`Uploading ${fileName}`, async () => {
                 return watcher.uploadFile(fileUri.fsPath);
             });
-            
+
             if (success) {
                 this.statusBar.showMessage('Upload complete!');
                 showSuccessMessage(`Uploaded: ${fileName}`);
@@ -94,12 +91,9 @@ export class CommandHandler {
         }
     }
 
-    /**
-     * Upload folder
-     */
     private async uploadFolder(uri?: vscode.Uri): Promise<void> {
         let folderUri = uri;
-        
+
         if (!folderUri) {
             const folders = await vscode.window.showOpenDialog({
                 canSelectFiles: false,
@@ -107,17 +101,11 @@ export class CommandHandler {
                 canSelectMany: false,
                 openLabel: 'Upload Folder'
             });
-            
+
             if (!folders || folders.length === 0) {
                 return;
             }
             folderUri = folders[0];
-        }
-
-        const config = this.configManager.getConfigForUri(folderUri);
-        if (!config) {
-            showWarningMessage('No FTP configuration found for this workspace');
-            return;
         }
 
         const workspacePath = this.configManager.getWorkspaceFolderPath(folderUri);
@@ -125,23 +113,29 @@ export class CommandHandler {
             return;
         }
 
+        // Ordner-Upload: jedes Profil, dessen localPath innerhalb des
+        // Ordners liegt, bekommt seinen Anteil. Heute heisst das: ein
+        // Profil pro Ordner.
+        const profile = this.configManager.getProfileForUri(folderUri);
+        if (!profile) {
+            showWarningMessage('No FTP configuration found for this workspace');
+            return;
+        }
+
         this.statusBar.showSyncing();
 
         try {
-            // Get or create watcher, ensuring we reuse existing connections
-            const watcher = await this.getOrCreateWatcher(workspacePath, config);
-            
-            // Get file count for progress
+            const watcher = await this.getOrCreateWatcher(workspacePath);
+
             const fileCount = await watcher.getFileCount(folderUri.fsPath);
-            
+
             if (fileCount === 0) {
                 showInfoMessage('Folder is empty or all files are ignored');
                 return;
             }
 
             const folderName = folderUri.fsPath.split(/[\\/]/).pop() || 'folder';
-            
-            // Upload with progress
+
             const result = await withFolderProgress(
                 `Uploading ${folderName}`,
                 fileCount,
@@ -151,7 +145,7 @@ export class CommandHandler {
                     });
                 }
             );
-            
+
             this.statusBar.showMessage(`Uploaded ${result.success} files`);
             showSuccessMessage(
                 `Upload complete: ${result.success} succeeded, ${result.failed} failed`
@@ -165,20 +159,11 @@ export class CommandHandler {
         }
     }
 
-    /**
-     * Download current file
-     */
     private async downloadFile(uri?: vscode.Uri): Promise<void> {
         const fileUri = uri || vscode.window.activeTextEditor?.document.uri;
-        
+
         if (!fileUri) {
             showWarningMessage('No file selected');
-            return;
-        }
-
-        const config = this.configManager.getConfigForUri(fileUri);
-        if (!config) {
-            showWarningMessage('No FTP configuration found for this workspace');
             return;
         }
 
@@ -187,16 +172,21 @@ export class CommandHandler {
             return;
         }
 
-        const remotePath = localToRemotePath(fileUri.fsPath, workspacePath, config.remotePath);
+        const profile = this.configManager.getProfileForUri(fileUri);
+        if (!profile) {
+            showWarningMessage('No FTP configuration found for this file');
+            return;
+        }
+
+        const remotePath = localToRemotePath(fileUri.fsPath, profile.localPath, profile.remotePath);
 
         this.statusBar.showSyncing();
 
         try {
-            // Get or create watcher, ensuring we reuse existing connections
-            const watcher = await this.getOrCreateWatcher(workspacePath, config);
+            const watcher = await this.getOrCreateWatcher(workspacePath);
 
             const success = await watcher.downloadFile(remotePath, fileUri.fsPath);
-            
+
             if (success) {
                 this.statusBar.showMessage('Download complete!');
                 showSuccessMessage(`Downloaded: ${getRelativePath(workspacePath, fileUri.fsPath)}`);
@@ -213,16 +203,10 @@ export class CommandHandler {
         }
     }
 
-    /**
-     * Download folder (placeholder)
-     */
     private async downloadFolder(_uri?: vscode.Uri): Promise<void> {
         showInfoMessage('Download folder feature coming soon!');
     }
 
-    /**
-     * Start file watcher
-     */
     private async startWatcher(): Promise<void> {
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (!workspaceFolders) {
@@ -231,13 +215,15 @@ export class CommandHandler {
         }
 
         for (const folder of workspaceFolders) {
-            const config = this.configManager.getConfig(folder.uri.fsPath);
-            if (!config) {
+            const profiles = this.configManager.getProfiles(folder.uri.fsPath);
+            if (profiles.size === 0) {
                 continue;
             }
 
-            if (!config.watcher.enabled) {
-                Logger.info(`Watcher disabled for ${folder.name}`);
+            const hasEnabled = Array.from(profiles.values())
+                .some(p => p.watcher.enabled);
+            if (!hasEnabled) {
+                Logger.info(`All profiles disabled for ${folder.name}`);
                 continue;
             }
 
@@ -247,18 +233,18 @@ export class CommandHandler {
             }
 
             try {
-                const watcher = new FileWatcher(folder.uri.fsPath, config);
-                
+                const watcher = new FileWatcher(folder.uri.fsPath, profiles);
+
                 watcher.onChange((event) => {
                     this.statusBar.showSyncing();
-                    Logger.info(`${event.type}: ${event.relativePath}`);
+                    Logger.info(`[${event.profileName}] ${event.type}: ${event.relativePath}`);
                     setTimeout(() => this.statusBar.endSyncing(), 500);
                 });
 
                 await watcher.start();
                 this.watchers.set(folder.uri.fsPath, watcher);
-                
-                Logger.success(`Watcher started for ${folder.name}`);
+
+                Logger.success(`Watcher started for ${folder.name} (${profiles.size} profile(s))`);
             } catch (error) {
                 Logger.error(`Failed to start watcher for ${folder.name}: ${(error as Error).message}`);
                 this.statusBar.setState('error');
@@ -269,37 +255,31 @@ export class CommandHandler {
 
         if (this.watchers.size > 0) {
             this.statusBar.setState('watching');
+            this.statusBar.setProfileCount(this.configManager.getProfileCount());
             showSuccessMessage('FTP Sync: File watcher started');
         }
     }
 
-    /**
-     * Stop file watcher
-     */
     private async stopWatcher(): Promise<void> {
+        // Promises cachen, damit eine noch laufende Initialisierung das
+        // .clear() nicht ueberlebt.
+        this.watcherPromises.clear();
         for (const [path, watcher] of this.watchers) {
             await watcher.stop();
             Logger.info(`Watcher stopped for ${path}`);
         }
-        
+
         this.watchers.clear();
+        this.statusBar.setProfileCount(0);
         this.statusBar.setState('idle');
         showInfoMessage('FTP Sync: File watcher stopped');
     }
 
-    /**
-     * Toggle file watcher
-     * If no config exists, creates one first
-     */
     private async toggleWatcher(): Promise<void> {
-        // Check if any config exists
-        if (!this.configManager.hasConfigs()) {
-            // No config exists - create one
+        if (!this.configManager.hasProfiles()) {
             await this.createConfig();
-            // After config is created, reload configs
             await this.configManager.initialize();
-            // Update status bar state
-            if (this.configManager.hasConfigs()) {
+            if (this.configManager.hasProfiles()) {
                 this.statusBar.setState('idle');
             }
             return;
@@ -312,12 +292,9 @@ export class CommandHandler {
         }
     }
 
-    /**
-     * Create configuration file
-     */
     private async createConfig(): Promise<void> {
         Logger.info('createConfig command triggered');
-        
+
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (!workspaceFolders) {
             showWarningMessage('No workspace folder open');
@@ -325,7 +302,7 @@ export class CommandHandler {
         }
 
         let folderPath: string;
-        
+
         if (workspaceFolders.length === 1) {
             folderPath = workspaceFolders[0].uri.fsPath;
         } else {
@@ -337,7 +314,7 @@ export class CommandHandler {
                 })),
                 { placeHolder: 'Select workspace folder for configuration' }
             );
-            
+
             if (!selected) {
                 return;
             }
@@ -347,22 +324,21 @@ export class CommandHandler {
         await this.configManager.createConfig(folderPath);
     }
 
-    /**
-     * Auto-start watchers if configured
-     */
     public async autoStart(): Promise<void> {
         const autoStart = vscode.workspace.getConfiguration('ftpSync').get<boolean>('autoStartWatcher');
-        if (autoStart && this.configManager.hasConfigs()) {
+        if (autoStart && this.configManager.hasProfiles()) {
             await this.startWatcher();
         }
     }
 
     /**
-     * Handle document save for upload on save
+     * Upload-on-Save: wird vom globalen Document-Save-Listener aufgerufen.
+     * Loest das Profil per URI auf; bei mehreren Profilen im selben
+     * Workspace gewinnt das spezifischste (laengster localPath).
      */
     public async handleDocumentSave(document: vscode.TextDocument): Promise<void> {
-        const config = this.configManager.getConfigForUri(document.uri);
-        if (!config || !config.uploadOnSave) {
+        const profile = this.configManager.getProfileForUri(document.uri);
+        if (!profile || !profile.uploadOnSave) {
             return;
         }
 
@@ -371,11 +347,10 @@ export class CommandHandler {
             return;
         }
 
-        // Get or create watcher, ensuring we reuse existing connections
-        const watcher = await this.getOrCreateWatcher(workspacePath, config);
+        const watcher = await this.getOrCreateWatcher(workspacePath);
 
         this.statusBar.showSyncing();
-        
+
         try {
             const success = await watcher.uploadFile(document.uri.fsPath);
             if (!success) {
@@ -390,15 +365,52 @@ export class CommandHandler {
     }
 
     /**
-     * Get existing watcher or create a new one for the workspace path
-     * Ensures connection reuse and prevents connection leaks
+     * Liefert den Watcher fuer den Workspace-Pfad oder erstellt einen neuen,
+     * falls noch keiner laeuft. Stellt sicher, dass jede Workspace-Folder-
+     * Verbindung nur einmal aufgebaut wird — selbst wenn mehrere Aufrufer
+     * gleichzeitig (z.B. Upload + Upload-on-Save) eine Initialisierung
+     * anstossen.
+     *
+     * Implementiert einen Promise-Cache: waehrend die erste Initialisierung
+     * laeuft, teilen sich alle nachfolgenden Aufrufer dasselbe Promise. Erst
+     * nach Abschluss (oder Fehler) wird der Eintrag entfernt, sodass ein
+     * Retry moeglich ist.
      */
-    private async getOrCreateWatcher(workspacePath: string, config: import('../types').FtpSyncConfig): Promise<FileWatcher> {
-        let watcher = this.watchers.get(workspacePath);
-        if (!watcher) {
-            watcher = new FileWatcher(workspacePath, config);
-            this.watchers.set(workspacePath, watcher);
+    private async getOrCreateWatcher(workspacePath: string): Promise<FileWatcher> {
+        const cached = this.watchers.get(workspacePath);
+        if (cached) {
+            return cached;
         }
-        return watcher;
+
+        const pending = this.watcherPromises.get(workspacePath);
+        if (pending) {
+            return pending;
+        }
+
+        const promise = (async () => {
+            const profiles = this.configManager.getProfiles(workspacePath);
+            if (profiles.size === 0) {
+                throw new Error(`No profiles for workspace ${workspacePath}`);
+            }
+            const watcher = new FileWatcher(workspacePath, profiles);
+            this.watchers.set(workspacePath, watcher);
+            return watcher;
+        })();
+
+        this.watcherPromises.set(workspacePath, promise);
+
+        try {
+            return await promise;
+        } finally {
+            this.watcherPromises.delete(workspacePath);
+        }
+    }
+
+    /**
+     * Liefert das Profil, das aktuell fuer eine URI zustaendig ist. Oeffent-
+     * lich fuer Konsumenten ausserhalb des CommandHandlers (z.B. Tests).
+     */
+    public getProfileForUri(uri: vscode.Uri): FtpSyncProfile | undefined {
+        return this.configManager.getProfileForUri(uri);
     }
 }

@@ -9,6 +9,7 @@ export class StatusBar {
     private statusBarItem: vscode.StatusBarItem;
     private currentState: StatusState = 'unconfigured';
     private syncCount = 0;
+    private profileCount = 0;
 
     constructor() {
         // Create status bar item with ID for better tracking
@@ -54,6 +55,18 @@ export class StatusBar {
     }
 
     /**
+     * Setzt die Anzahl der aktuell aktiven Profile. Wird im Watching- und
+     * Syncing-Zustand als Suffix angezeigt, sobald mehr als ein Profil
+     * konfiguriert ist (z.B. "Watching (3 profiles)"). Bei 0 oder 1 Profil
+     * bleibt die Anzeige unveraendert, damit Single-Profile-Setups nicht
+     * mit ueberfluessiger Information befuellt werden.
+     */
+    public setProfileCount(count: number): void {
+        this.profileCount = Math.max(0, count | 0);
+        this.updateDisplay();
+    }
+
+    /**
      * Get current state
      */
     public getState(): StatusState {
@@ -94,13 +107,21 @@ export class StatusBar {
                 this.statusBarItem.backgroundColor = undefined;
                 break;
             case 'watching':
-                this.statusBarItem.text = '$(eye) FTP Sync: Watching';
-                this.statusBarItem.tooltip = 'File watcher active - Click to stop';
+                this.statusBarItem.text = this.profileCount > 1
+                    ? `$(eye) FTP Sync: Watching (${this.profileCount} profiles)`
+                    : '$(eye) FTP Sync: Watching';
+                this.statusBarItem.tooltip = this.profileCount > 1
+                    ? `${this.profileCount} profiles active - Click to stop`
+                    : 'File watcher active - Click to stop';
                 this.statusBarItem.backgroundColor = undefined;
                 break;
             case 'syncing':
-                this.statusBarItem.text = '$(sync~spin) FTP Sync: Syncing...';
-                this.statusBarItem.tooltip = 'Uploading files...';
+                this.statusBarItem.text = this.profileCount > 1
+                    ? `$(sync~spin) FTP Sync: Syncing (${this.profileCount} profiles)...`
+                    : '$(sync~spin) FTP Sync: Syncing...';
+                this.statusBarItem.tooltip = this.profileCount > 1
+                    ? `Syncing ${this.profileCount} profiles...`
+                    : 'Uploading files...';
                 this.statusBarItem.backgroundColor = undefined;
                 break;
             case 'error':

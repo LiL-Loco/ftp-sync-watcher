@@ -1,4 +1,4 @@
-import { FtpSyncConfig } from '../types';
+import { FtpSyncProfile } from '../types';
 import { RemoteClient } from './remoteClient';
 import { FtpClient } from './ftpClient';
 import { SftpClientWrapper } from './sftpClient';
@@ -10,7 +10,7 @@ export { SftpClientWrapper } from './sftpClient';
 /**
  * Factory function to create the appropriate client based on protocol
  */
-export function createClient(config: FtpSyncConfig): RemoteClient {
+export function createClient(config: FtpSyncProfile): RemoteClient {
     switch (config.protocol) {
         case 'ftp':
             return new FtpClient(config);

@@ -1,4 +1,4 @@
-import { FtpSyncConfig } from '../types';
+import { FtpSyncProfile } from '../types';
 
 /**
  * Result of a file transfer operation
@@ -25,10 +25,10 @@ export interface RemoteFileInfo {
  * Abstract base class for remote clients (FTP/SFTP)
  */
 export abstract class RemoteClient {
-    protected config: FtpSyncConfig;
+    protected config: FtpSyncProfile;
     protected connected = false;
 
-    constructor(config: FtpSyncConfig) {
+    constructor(config: FtpSyncProfile) {
         this.config = config;
     }
 

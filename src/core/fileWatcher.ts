@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { FtpSyncConfig } from '../types';
-import { Logger, getRelativePath, localToRemotePath } from '../utils';
+import { FtpSyncProfile } from '../types';
+import { Logger, getRelativePath, localToRemotePath, resolveProfileByLongestPrefix } from '../utils';
 import { IgnoreHandler } from './ignoreHandler';
 import { ConnectionPool } from './connectionPool';
 import { OperationQueue } from './operationQueue';
@@ -12,6 +12,7 @@ export interface FileChangeEvent {
     type: FileChangeType;
     uri: vscode.Uri;
     relativePath: string;
+    profileName: string;
 }
 
 export interface WatcherStats {
@@ -25,21 +26,38 @@ export interface WatcherStats {
 }
 
 /**
- * Robust file watcher with automatic reconnection and operation queuing
+ * FileWatcher pro Workspace-Folder (Klassenname historisch, bleibt
+ * unveraendert fuer Kompatibilitaet mit User-facing Commands und Settings).
+ *
+ * Seit v2.0.0 ist dieser Watcher fuer mehrere Profile in einem Workspace
+ * zustaendig. Pro Profil haelt er:
+ *   - einen eigenen ConnectionPool (eigener Mutex, eigenes Retry-Budget)
+ *   - einen eigenen IgnoreHandler (jedes Profil hat eigene ignore-Liste)
+ *
+ * Die OperationQueue ist pro Watcher genau einmal und serialisiert
+ * *Sequencing* (Prioritaet + Reihenfolge) ueber alle Profile hinweg.
+ * Retry- und Slot-Management-Semantik delegiert sie an ConnectionPool und
+ * globalConnectionManager (siehe ADR-0001).
+ *
+ * Pro ausgeloestem Trigger wird das zustaendige Profil per localPath-
+ * Praefix-Match bestimmt; ein Transfer laeuft immer ueber den
+ * ConnectionPool dieses Profils. Bidirektionaler Sync ist als ZWEI Profile
+ * modelliert (siehe ADR-0003); die zugehoerige Tombstone-Logik wird in
+ * einem spaeteren Release angebunden.
  */
 export class FileWatcher {
-    private config: FtpSyncConfig;
     private workspacePath: string;
-    private ignoreHandler: IgnoreHandler;
+    private profiles: Map<string, FtpSyncProfile> = new Map();
+    private connectionPools: Map<string, ConnectionPool> = new Map();
+    private ignoreHandlers: Map<string, IgnoreHandler> = new Map();
+    private operationQueue: OperationQueue;
     private watcher: vscode.FileSystemWatcher | undefined;
     private watcherDisposables: vscode.Disposable[] = [];
-    private connectionPool: ConnectionPool;
-    private operationQueue: OperationQueue;
     private isRunning = false;
     private debounceTimers: Map<string, NodeJS.Timeout> = new Map();
-    private pendingOperations: Set<string> = new Set(); // Track files currently being processed
-    private activeUploads: Set<string> = new Set(); // Track files being uploaded by uploadFile()
-    private debounceMs = 500; // Increased from 300ms to handle Ctrl+S spam
+    private pendingOperations: Set<string> = new Set();
+    private activeUploads: Set<string> = new Set();
+    private debounceMs = 500;
     private onChangeCallback?: (event: FileChangeEvent) => void;
     private onErrorCallback?: (error: Error) => void;
     private stats: WatcherStats = {
@@ -52,23 +70,24 @@ export class FileWatcher {
         queueLength: 0
     };
 
-    constructor(workspacePath: string, config: FtpSyncConfig) {
+    constructor(workspacePath: string, profiles: Map<string, FtpSyncProfile>) {
         this.workspacePath = workspacePath;
-        this.config = config;
-        this.ignoreHandler = new IgnoreHandler(
-            workspacePath,
-            config.ignore,
-            config.useGitIgnore
-        );
-        this.connectionPool = new ConnectionPool(config);
-        this.operationQueue = new OperationQueue(
-            config.concurrency || 3,
-            config.timeout || 30000
-        );
+        this.profiles = profiles;
+        this.operationQueue = new OperationQueue(30000);
+
+        for (const [name, profile] of profiles.entries()) {
+            this.connectionPools.set(name, new ConnectionPool(profile));
+            this.ignoreHandlers.set(name, new IgnoreHandler(
+                workspacePath,
+                profile.ignore,
+                profile.useGitIgnore
+            ));
+        }
     }
 
     /**
-     * Start the file watcher
+     * Startet den File-Watcher fuer alle aktiven Profile. Profile mit
+     * watcher.enabled === false werden uebersprungen.
      */
     public async start(): Promise<void> {
         if (this.isRunning) {
@@ -77,25 +96,57 @@ export class FileWatcher {
         }
 
         try {
-            // Initialize ignore handler
-            await this.ignoreHandler.initialize();
+            // Ignore-Handler initialisieren und Verbindung fuer jedes aktive
+            // Profil testen. Fehler in einem Profil blockieren den Start
+            // anderer Profile nicht — sie werden spaeter beim Trigger erneut
+            // versucht (ConnectionPool-Reconnect).
+            for (const [name, profile] of this.profiles.entries()) {
+                if (!profile.watcher.enabled) {
+                    Logger.info(`Watcher disabled for profile "${name}"`);
+                    continue;
+                }
 
-            // Test connection before starting
-            Logger.info('Testing connection...');
-            await this.connectionPool.getConnection();
-            this.stats.isConnected = true;
+                const ignoreHandler = this.ignoreHandlers.get(name);
+                if (ignoreHandler) {
+                    await ignoreHandler.initialize();
+                }
 
-            // Determine watch pattern
-            const watchPattern = typeof this.config.watcher.files === 'string'
-                ? this.config.watcher.files
-                : '**/*';
+                const pool = this.connectionPools.get(name);
+                if (pool) {
+                    try {
+                        Logger.info(`Testing connection for profile "${name}"...`);
+                        await pool.getConnection();
+                    } catch (error) {
+                        Logger.warn(
+                            `Profile "${name}" initial connection failed (will retry on demand): ${(error as Error).message}`
+                        );
+                    }
+                }
+            }
 
-            // Create file watcher
+            // Watch-Pattern: aus dem ersten aktiven Profil ableiten. Mehrere
+            // Patterns koennen wir nicht kombinieren — daher gilt der Pattern
+            // des ersten aktiven Profils fuer den ganzen Watcher. In der Regel
+            // teilen sich Profile innerhalb eines Workspace dieselbe Quelle.
+            let watchPattern = '**/*';
+            for (const profile of this.profiles.values()) {
+                if (profile.watcher.enabled && typeof profile.watcher.files === 'string') {
+                    watchPattern = profile.watcher.files;
+                    break;
+                }
+            }
+
             const pattern = new vscode.RelativePattern(this.workspacePath, watchPattern);
             this.watcher = vscode.workspace.createFileSystemWatcher(pattern);
 
-            // Setup event handlers and store disposables
-            if (this.config.watcher.autoUpload) {
+            // Events werden auf alle aktiven Profile verteilt: jeder Trigger
+            // wird per localPath-Match dem zustaendigen Profil zugeordnet.
+            const anyAutoUpload = Array.from(this.profiles.values())
+                .some(p => p.watcher.enabled && p.watcher.autoUpload);
+            const anyAutoDelete = Array.from(this.profiles.values())
+                .some(p => p.watcher.enabled && p.watcher.autoDelete);
+
+            if (anyAutoUpload) {
                 this.watcherDisposables.push(
                     this.watcher.onDidCreate((uri) => this.handleFileChange('created', uri))
                 );
@@ -104,16 +155,15 @@ export class FileWatcher {
                 );
             }
 
-            if (this.config.watcher.autoDelete) {
+            if (anyAutoDelete) {
                 this.watcherDisposables.push(
                     this.watcher.onDidDelete((uri) => this.handleFileChange('deleted', uri))
                 );
             }
 
             this.isRunning = true;
-            Logger.success(`File watcher started for ${this.workspacePath}`);
+            Logger.success(`File watcher started for ${this.workspacePath} (${this.connectionPools.size} pool(s))`);
             Logger.info(`Watching pattern: ${watchPattern}`);
-            Logger.info(`Concurrency: ${this.config.concurrency || 3}, Timeout: ${this.config.timeout || 30000}ms`);
         } catch (error) {
             this.stats.isConnected = false;
             Logger.error(`Failed to start file watcher: ${(error as Error).message}`, error as Error);
@@ -122,160 +172,167 @@ export class FileWatcher {
     }
 
     /**
-     * Stop the file watcher
+     * Stoppt den File-Watcher und gibt alle Ressourcen frei.
      */
     public async stop(): Promise<void> {
         if (!this.isRunning) {
             return;
         }
 
-        // Clear debounce timers
         this.debounceTimers.forEach((timer) => clearTimeout(timer));
         this.debounceTimers.clear();
-
-        // Clear pending operations tracking
         this.pendingOperations.clear();
-        
-        // Clear active uploads tracking
         this.activeUploads.clear();
-
-        // Clear operation queue
         this.operationQueue.clear();
 
-        // Dispose event listeners first
         this.watcherDisposables.forEach(d => d.dispose());
         this.watcherDisposables = [];
 
-        // Dispose watcher
         if (this.watcher) {
             this.watcher.dispose();
             this.watcher = undefined;
         }
 
-        // Dispose connection pool
-        await this.connectionPool.dispose();
+        for (const pool of this.connectionPools.values()) {
+            await pool.dispose();
+        }
         this.stats.isConnected = false;
 
         this.isRunning = false;
         Logger.info('File watcher stopped');
     }
 
-    /**
-     * Check if watcher is running
-     */
     public isActive(): boolean {
         return this.isRunning;
     }
 
     /**
-     * Get current statistics
+     * Liefert aggregierte Statistik. Bei mehreren Profilen ist
+     * isConnected === true, sobald mindestens ein Pool verbunden ist.
      */
     public getStats(): WatcherStats {
         const queueStatus = this.operationQueue.getStatus();
+        const anyConnected = Array.from(this.connectionPools.values())
+            .some(pool => pool.isConnected());
         return {
             ...this.stats,
-            isConnected: this.connectionPool.isConnected(),
+            isConnected: anyConnected,
             queueLength: queueStatus.pending + queueStatus.active
         };
     }
 
-    /**
-     * Set callback for file changes
-     */
     public onChange(callback: (event: FileChangeEvent) => void): void {
         this.onChangeCallback = callback;
     }
 
-    /**
-     * Set callback for errors
-     */
     public onError(callback: (error: Error) => void): void {
         this.onErrorCallback = callback;
     }
 
     /**
-     * Handle file change events with debouncing and duplicate prevention
+     * Loest die URI auf das zustaendige Profil auf (lokalster localPath
+     * gewinnt). Profile ohne Match oder mit deaktiviertem Watcher werden
+     * uebersprungen.
+     */
+    private resolveProfileForUri(uri: vscode.Uri): { profile: FtpSyncProfile; name: string } | undefined {
+        const eligible: Array<{ name: string; profile: FtpSyncProfile }> = [];
+        for (const [name, profile] of this.profiles.entries()) {
+            if (!profile.watcher.enabled) {
+                continue;
+            }
+            eligible.push({ name, profile });
+        }
+
+        const match = resolveProfileByLongestPrefix(uri.fsPath, eligible.map(e => e.profile));
+        if (!match) {
+            return undefined;
+        }
+        const entry = eligible.find(e => e.profile.localPath === match.localPath);
+        if (!entry) {
+            return undefined;
+        }
+        return { profile: entry.profile, name: entry.name };
+    }
+
+    /**
+     * File-Change-Handler mit Debouncing und Duplikat-Vermeidung. Identisch
+     * zum alten Verhalten, aber das Ziel-Profil wird pro Trigger bestimmt.
      */
     private handleFileChange(type: FileChangeType, uri: vscode.Uri): void {
-        const relativePath = getRelativePath(this.workspacePath, uri.fsPath);
-
-        // Check if file should be ignored
-        if (this.ignoreHandler.isIgnored(relativePath)) {
-            Logger.debug(`Ignoring ${type} event for: ${relativePath}`);
+        const resolved = this.resolveProfileForUri(uri);
+        if (!resolved) {
+            Logger.debug(`No matching profile for ${type} event: ${uri.fsPath}`);
             return;
         }
 
-        // Use file path as key (not type:path) to coalesce all events for same file
+        const { profile, name: profileName } = resolved;
+        const ignoreHandler = this.ignoreHandlers.get(profileName);
+
+        const relativePath = getRelativePath(profile.localPath, uri.fsPath);
+        const workspaceRelative = getRelativePath(this.workspacePath, uri.fsPath);
+
+        if (ignoreHandler && ignoreHandler.isIgnored(relativePath)) {
+            Logger.debug(`[${profileName}] Ignoring ${type} event for: ${workspaceRelative}`);
+            return;
+        }
+
         const key = uri.fsPath;
-        
-        // If this file is currently being uploaded via uploadFile() (uploadOnSave), skip
-        // This prevents double uploads when both uploadOnSave and watcher are active
+
         if (this.activeUploads.has(key)) {
-            Logger.debug(`Skipping watcher ${type} for: ${relativePath} (uploadOnSave in progress)`);
+            Logger.debug(`[${profileName}] Skipping watcher ${type} for: ${workspaceRelative} (uploadOnSave in progress)`);
             return;
         }
-        
-        // If this file is already being processed, just reset the debounce timer
-        // This ensures we upload the latest version after the current upload finishes
+
         const existingTimer = this.debounceTimers.get(key);
         if (existingTimer) {
             clearTimeout(existingTimer);
-            Logger.debug(`Debouncing ${type} for: ${relativePath}`);
+            Logger.debug(`[${profileName}] Debouncing ${type} for: ${workspaceRelative}`);
         }
 
         const timer = setTimeout(() => {
             this.debounceTimers.delete(key);
-            
-            // Skip if this file is already in the queue or being processed
+
             if (this.pendingOperations.has(key)) {
-                Logger.debug(`Skipping duplicate ${type} for: ${relativePath} (already queued)`);
+                Logger.debug(`[${profileName}] Skipping duplicate ${type} for: ${workspaceRelative} (already queued)`);
                 return;
             }
-            
-            // Double-check activeUploads again after debounce
+
             if (this.activeUploads.has(key)) {
-                Logger.debug(`Skipping watcher ${type} for: ${relativePath} (uploadOnSave completed during debounce)`);
+                Logger.debug(`[${profileName}] Skipping watcher ${type} for: ${workspaceRelative} (uploadOnSave completed during debounce)`);
                 return;
             }
-            
-            this.queueFileChange(type, uri, relativePath);
+
+            this.queueFileChange(type, uri, workspaceRelative, profileName);
         }, this.debounceMs);
 
         this.debounceTimers.set(key, timer);
     }
 
-    /**
-     * Queue a file change for processing
-     */
     private queueFileChange(
         type: FileChangeType,
         uri: vscode.Uri,
-        relativePath: string
+        relativePath: string,
+        profileName: string
     ): void {
-        const event: FileChangeEvent = { type, uri, relativePath };
+        const event: FileChangeEvent = { type, uri, relativePath, profileName };
         const key = uri.fsPath;
 
-        // Mark this file as pending
         this.pendingOperations.add(key);
 
-        // Notify callback immediately
         if (this.onChangeCallback) {
             this.onChangeCallback(event);
         }
 
-        // Queue the operation
-        const priority = type === 'deleted' ? 0 : 1; // Uploads have higher priority
-        
+        const priority = type === 'deleted' ? 0 : 1;
+
         this.operationQueue.enqueue(
-            () => this.processFileChange(type, uri, relativePath),
-            { priority, timeout: this.config.timeout || 30000 }
+            () => this.processFileChange(type, uri, relativePath, profileName),
+            { priority, timeout: 30000 }
         ).then(() => {
-            // Remove from pending on success
             this.pendingOperations.delete(key);
         }).catch((error) => {
-            // Remove from pending on error
             this.pendingOperations.delete(key);
-            Logger.error(`Failed to process ${type} for ${relativePath}: ${error.message}`);
+            Logger.error(`[${profileName}] Failed to process ${type} for ${relativePath}: ${(error as Error).message}`);
             if (this.onErrorCallback) {
                 this.onErrorCallback(error as Error);
             }
@@ -283,36 +340,40 @@ export class FileWatcher {
     }
 
     /**
-     * Process a file change event
+     * Verarbeitet einen File-Change ueber den ConnectionPool des Profils.
      */
     private async processFileChange(
         type: FileChangeType,
         uri: vscode.Uri,
-        relativePath: string
+        relativePath: string,
+        profileName: string
     ): Promise<void> {
+        const profile = this.profiles.get(profileName);
+        const pool = this.connectionPools.get(profileName);
+        if (!profile || !pool) {
+            throw new Error(`Profile "${profileName}" disappeared during processing`);
+        }
+
         const remotePath = localToRemotePath(
             uri.fsPath,
-            this.workspacePath,
-            this.config.remotePath
+            profile.localPath,
+            profile.remotePath
         );
 
         try {
-            await this.connectionPool.executeWithRetry(
+            await pool.executeWithRetry(
                 async (client) => {
                     switch (type) {
                         case 'created':
                         case 'changed': {
-                            // Check if it's a directory
                             const fs = await import('fs');
                             const stats = fs.statSync(uri.fsPath);
-                            
+
                             if (stats.isDirectory()) {
-                                // For directories, just ensure they exist on remote
-                                Logger.debug(`Creating directory: ${remotePath}`);
+                                Logger.debug(`[${profileName}] Creating directory: ${remotePath}`);
                                 await client.ensureDirectory(remotePath);
                                 this.stats.uploadsSucceeded++;
                             } else {
-                                // For files, upload normally
                                 const result = await client.uploadFile(uri.fsPath, remotePath);
                                 if (result.success) {
                                     this.stats.uploadsSucceeded++;
@@ -328,13 +389,12 @@ export class FileWatcher {
                                 await client.deleteFile(remotePath);
                                 this.stats.deletesSucceeded++;
                             } catch {
-                                // Try deleting as directory
                                 try {
                                     await client.deleteDirectory(remotePath);
                                     this.stats.deletesSucceeded++;
-                                } catch (dirError) {
+                                } catch {
                                     this.stats.deletesFailed++;
-                                    Logger.debug(`Could not delete ${remotePath}: may not exist on remote`);
+                                    Logger.debug(`[${profileName}] Could not delete ${remotePath}: may not exist on remote`);
                                 }
                             }
                             break;
@@ -344,39 +404,54 @@ export class FileWatcher {
             );
 
             this.stats.lastActivity = new Date();
-            this.stats.isConnected = true;
+            this.stats.isConnected = pool.isConnected();
         } catch (error) {
-            this.stats.isConnected = this.connectionPool.isConnected();
+            this.stats.isConnected = pool.isConnected();
             throw error;
         }
     }
 
     /**
-     * Upload a single file manually (used by uploadOnSave)
-     * This method is serialized via activeUploads to prevent conflicts with the watcher
+     * Manueller Upload (z.B. via Ctrl+S). Verwendet das per URI aufgeloeste
+     * Profil. Bei keinem Match: Fehler (im Gegensatz zum Watcher, der
+     * stumm uebergeht).
      */
     public async uploadFile(localPath: string): Promise<boolean> {
-        const relativePath = getRelativePath(this.workspacePath, localPath);
-        
-        if (this.ignoreHandler.isIgnored(relativePath)) {
-            Logger.warn(`File is ignored: ${relativePath}`);
+        const uri = vscode.Uri.file(localPath);
+        const resolved = this.resolveProfileForUri(uri);
+        if (!resolved) {
+            Logger.warn(`No profile found for upload: ${localPath}`);
             return false;
         }
 
-        // Mark this file as being uploaded to prevent watcher conflicts
+        const { profile, name: profileName } = resolved;
+        const ignoreHandler = this.ignoreHandlers.get(profileName);
+        const pool = this.connectionPools.get(profileName);
+
+        if (!pool) {
+            Logger.error(`Profile "${profileName}" has no connection pool`);
+            return false;
+        }
+
+        const relativePath = getRelativePath(profile.localPath, localPath);
+
+        if (ignoreHandler && ignoreHandler.isIgnored(relativePath)) {
+            Logger.warn(`[${profileName}] File is ignored: ${relativePath}`);
+            return false;
+        }
+
         this.activeUploads.add(localPath);
-        
-        // Also cancel any pending debounce timer for this file
+
         const existingTimer = this.debounceTimers.get(localPath);
         if (existingTimer) {
             clearTimeout(existingTimer);
             this.debounceTimers.delete(localPath);
         }
 
-        const remotePath = localToRemotePath(localPath, this.workspacePath, this.config.remotePath);
+        const remotePath = localToRemotePath(localPath, profile.localPath, profile.remotePath);
 
         try {
-            await this.connectionPool.executeWithRetry(
+            await pool.executeWithRetry(
                 async (client) => {
                     const result = await client.uploadFile(localPath, remotePath);
                     if (!result.success) {
@@ -388,16 +463,14 @@ export class FileWatcher {
 
             this.stats.uploadsSucceeded++;
             this.stats.lastActivity = new Date();
-            this.stats.isConnected = true;
+            this.stats.isConnected = pool.isConnected();
             return true;
         } catch (error) {
             this.stats.uploadsFailed++;
-            this.stats.isConnected = this.connectionPool.isConnected();
-            Logger.error(`Failed to upload ${relativePath}: ${(error as Error).message}`);
+            this.stats.isConnected = pool.isConnected();
+            Logger.error(`[${profileName}] Failed to upload ${relativePath}: ${(error as Error).message}`);
             return false;
         } finally {
-            // Remove from active uploads after a short delay
-            // This gives the watcher time to ignore the change event
             setTimeout(() => {
                 this.activeUploads.delete(localPath);
             }, 1000);
@@ -405,11 +478,26 @@ export class FileWatcher {
     }
 
     /**
-     * Download a single file manually
+     * Manueller Download. Verwendet das per URI aufgeloeste Profil.
      */
     public async downloadFile(remotePath: string, localPath: string): Promise<boolean> {
+        const uri = vscode.Uri.file(localPath);
+        const resolved = this.resolveProfileForUri(uri);
+        if (!resolved) {
+            Logger.warn(`No profile found for download: ${localPath}`);
+            return false;
+        }
+
+        const { name: profileName } = resolved;
+        const pool = this.connectionPools.get(profileName);
+
+        if (!pool) {
+            Logger.error(`Profile "${profileName}" has no connection pool`);
+            return false;
+        }
+
         try {
-            await this.connectionPool.executeWithRetry(
+            await pool.executeWithRetry(
                 async (client) => {
                     const result = await client.downloadFile(remotePath, localPath);
                     if (!result.success) {
@@ -420,30 +508,29 @@ export class FileWatcher {
             );
 
             this.stats.lastActivity = new Date();
-            this.stats.isConnected = true;
+            this.stats.isConnected = pool.isConnected();
             return true;
         } catch (error) {
-            this.stats.isConnected = this.connectionPool.isConnected();
-            Logger.error(`Failed to download: ${(error as Error).message}`);
+            this.stats.isConnected = pool.isConnected();
+            Logger.error(`[${profileName}] Failed to download: ${(error as Error).message}`);
             return false;
         }
     }
 
     /**
-     * Upload a folder recursively
-     * @param localPath Path to the folder to upload
-     * @param onProgress Optional callback for progress reporting (current, total, fileName)
+     * Upload eines Ordners rekursiv. Iteriert ueber alle Profile und laedt
+     * jede Datei ueber das passende Profil hoch. Reihenfolge ist die
+     * Definition-Reihenfolge der Profile.
      */
     public async uploadFolder(
-        localPath: string,
+        folderPath: string,
         onProgress?: (current: number, total: number, fileName: string) => void
     ): Promise<{ success: number; failed: number }> {
         const fs = await import('fs');
         const result = { success: 0, failed: 0 };
 
-        // First, collect all files to upload
         const filesToUpload: Array<{ fullPath: string; relativePath: string }> = [];
-        
+
         const collectFiles = (dirPath: string): void => {
             const entries = fs.readdirSync(dirPath, { withFileTypes: true });
 
@@ -451,7 +538,15 @@ export class FileWatcher {
                 const fullPath = path.join(dirPath, entry.name);
                 const relativePath = getRelativePath(this.workspacePath, fullPath);
 
-                if (this.ignoreHandler.isIgnored(relativePath)) {
+                // Globale Pruefung gegen alle Profile-Ignore-Listen.
+                let ignored = false;
+                for (const handler of this.ignoreHandlers.values()) {
+                    if (handler.isIgnored(relativePath)) {
+                        ignored = true;
+                        break;
+                    }
+                }
+                if (ignored) {
                     continue;
                 }
 
@@ -463,13 +558,12 @@ export class FileWatcher {
             }
         };
 
-        collectFiles(localPath);
+        collectFiles(folderPath);
         const totalFiles = filesToUpload.length;
 
-        // Upload files with progress
         for (let i = 0; i < filesToUpload.length; i++) {
             const file = filesToUpload[i];
-            
+
             if (onProgress) {
                 onProgress(i + 1, totalFiles, path.basename(file.fullPath));
             }
@@ -486,9 +580,10 @@ export class FileWatcher {
     }
 
     /**
-     * Get file count in folder (for progress estimation)
+     * Liefert die Anzahl der Dateien im Ordner, die von KEINEM Profil
+     * ignoriert werden.
      */
-    public async getFileCount(localPath: string): Promise<number> {
+    public async getFileCount(folderPath: string): Promise<number> {
         const fs = await import('fs');
         let count = 0;
 
@@ -498,7 +593,14 @@ export class FileWatcher {
                 const fullPath = path.join(dirPath, entry.name);
                 const relativePath = getRelativePath(this.workspacePath, fullPath);
 
-                if (this.ignoreHandler.isIgnored(relativePath)) {
+                let ignored = false;
+                for (const handler of this.ignoreHandlers.values()) {
+                    if (handler.isIgnored(relativePath)) {
+                        ignored = true;
+                        break;
+                    }
+                }
+                if (ignored) {
                     continue;
                 }
 
@@ -510,37 +612,52 @@ export class FileWatcher {
             }
         };
 
-        countFiles(localPath);
+        countFiles(folderPath);
         return count;
     }
 
-    /**
-     * Reload ignore patterns
-     */
     public async reloadIgnorePatterns(): Promise<void> {
-        await this.ignoreHandler.reload();
+        for (const handler of this.ignoreHandlers.values()) {
+            await handler.reload();
+        }
     }
 
     /**
-     * Force reconnection
+     * Erzwingt Reconnect aller ConnectionPools.
      */
     public async forceReconnect(): Promise<void> {
-        Logger.info('Forcing reconnection...');
-        await this.connectionPool.forceReconnect();
+        Logger.info('Forcing reconnection for all profiles...');
+        for (const pool of this.connectionPools.values()) {
+            try {
+                await pool.forceReconnect();
+            } catch (error) {
+                Logger.warn(`Reconnect failed: ${(error as Error).message}`);
+            }
+        }
         this.stats.isConnected = true;
     }
 
-    /**
-     * Pause processing
-     */
     public pause(): void {
         this.operationQueue.pause();
     }
 
-    /**
-     * Resume processing
-     */
     public resume(): void {
         this.operationQueue.resume();
+    }
+
+    /**
+     * Liefert die Profile-Map (read-only-Sicht). Fuer Konsumenten, die das
+     * Profil direkt brauchen (z.B. fuer Host-Anzeige in der Statusbar).
+     */
+    public getProfiles(): Map<string, FtpSyncProfile> {
+        return this.profiles;
+    }
+
+    /**
+     * Liefert einen bestimmten ConnectionPool. Benoetigt von Konsumenten, die
+     * ausserhalb des Watcher-Flows arbeiten (z.B. FTP Explorer).
+     */
+    public getConnectionPool(profileName: string): ConnectionPool | undefined {
+        return this.connectionPools.get(profileName);
     }
 }

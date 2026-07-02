@@ -2,7 +2,7 @@
   "name": "ftp-sync-watcher",
   "displayName": "FTP/SFTP Sync Watcher",
   "description": "Automatischer Upload und Sync von Dateien auf FTP/SFTP Server mit File Watcher, .gitignore Support und Exclude-Patterns",
-  "version": "1.1.5",
+  "version": "2.0.0",
   "publisher": "ThaLoco0ne",
   "icon": "media/icon.png",
   "galleryBanner": {
@@ -236,6 +236,7 @@
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src --ext ts",
+    "test:unit": "npm run compile && mocha",
     "test": "vscode-test"
   },
   "devDependencies": {
@@ -248,14 +249,16 @@
     "@typescript-eslint/parser": "^6.15.0",
     "@vscode/test-cli": "^0.0.4",
     "@vscode/test-electron": "^2.3.8",
-    "eslint": "^8.56.0",
+    "eslint": "^8.57.1",
     "sharp": "^0.34.5",
     "typescript": "^5.3.3"
   },
   "dependencies": {
+    "@eslint/eslintrc": "^3.3.5",
     "basic-ftp": "^5.0.4",
     "ignore": "^5.3.0",
     "ssh2": "^1.15.0",
-    "ssh2-sftp-client": "^9.1.0"
+    "ssh2-sftp-client": "^9.1.0",
+    "undici-types": "^8.5.0"
   }
 }

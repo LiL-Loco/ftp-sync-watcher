@@ -1,195 +1,249 @@
 {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "title": "FTP Sync Configuration",
-    "description": "Configuration file for FTP/SFTP Sync Watcher",
+    "description": "Configuration file for FTP/SFTP Sync Watcher (v2.0+ — Multi-Profile).\n\nSeit v2.0.0 erwartet diese Datei eine Liste von Profilen unter dem Schluessel 'profiles'. Aeltere Konfigurationen ohne 'profiles'-Schluessel werden beim Laden stillschweigend migriert: das alte Flach-Objekt wird in ein einzelnes Profil mit dem Namen 'default' eingebettet. Es gibt keinen Hinweis oder Modal — der Upgrade fuehlt sich unsichtbar an.\n\nHinweis: Bidirektionale Synchronisation wird als ZWEI Profile in derselben Datei ausgedrueckt (ein Profil pro Richtung), nicht ueber ein einzelnes Profil mit 'direction: bidirectional'. Felder wie 'name', 'host', 'username' und 'remotePath' sind innerhalb jedes Profils Pflicht.",
     "type": "object",
-    "required": [
-        "host",
-        "username",
-        "remotePath"
-    ],
     "properties": {
-        "name": {
+        "profiles": {
+            "type": "array",
+            "description": "Liste der Sync-Profile in dieser Workspace-Konfiguration (empfohlen ab v2.0.0).",
+            "items": {
+                "$ref": "#/definitions/profile"
+            },
+            "minItems": 1
+        },
+
+        "host": {
             "type": "string",
-            "description": "Name for this connection profile"
+            "description": "DEPRECATED: Bitte unter profiles[].host ablegen. Wird beim Laden automatisch in ein einzelnes Profil migriert."
         },
         "protocol": {
             "type": "string",
-            "enum": [
-                "ftp",
-                "sftp"
-            ],
-            "default": "sftp",
-            "description": "Protocol to use for connection"
-        },
-        "host": {
-            "type": "string",
-            "description": "Hostname or IP address of the server"
-        },
-        "port": {
-            "type": "integer",
-            "description": "Port number (default: 21 for FTP, 22 for SFTP)"
+            "enum": ["ftp", "sftp"],
+            "description": "DEPRECATED: Bitte unter profiles[].protocol ablegen."
         },
         "username": {
             "type": "string",
-            "description": "Username for authentication"
-        },
-        "password": {
-            "type": "string",
-            "description": "Password for authentication (not recommended, use privateKeyPath instead)"
-        },
-        "privateKeyPath": {
-            "type": "string",
-            "description": "Path to private key file for SFTP authentication"
-        },
-        "passphrase": {
-            "type": "string",
-            "description": "Passphrase for encrypted private key"
+            "description": "DEPRECATED: Bitte unter profiles[].username ablegen."
         },
         "remotePath": {
             "type": "string",
-            "description": "Remote directory path to sync with"
+            "description": "DEPRECATED: Bitte unter profiles[].remotePath ablegen."
         },
-        "localPath": {
-            "type": "string",
-            "default": ".",
-            "description": "Local directory path relative to workspace (default: workspace root)"
+        "port": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535,
+            "description": "DEPRECATED: Bitte unter profiles[].port ablegen."
+        }
+    },
+    "anyOf": [
+        {
+            "required": ["profiles"]
         },
-        "uploadOnSave": {
-            "type": "boolean",
-            "default": true,
-            "description": "Automatically upload files when saved"
-        },
-        "watcher": {
+        {
+            "required": ["host", "username", "remotePath"]
+        }
+    ],
+    "definitions": {
+        "profile": {
             "type": "object",
-            "description": "File watcher configuration",
-            "properties": {
-                "enabled": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Enable file watcher"
-                },
-                "files": {
-                    "oneOf": [
-                        {
-                            "type": "string",
-                            "description": "Glob pattern for files to watch"
-                        },
-                        {
-                            "type": "boolean",
-                            "const": false,
-                            "description": "Disable file watching"
-                        }
-                    ],
-                    "default": "**/*",
-                    "description": "Glob pattern for files to watch or false to disable"
-                },
-                "autoUpload": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Automatically upload changed files"
-                },
-                "autoDelete": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "Automatically delete remote files when local files are deleted"
-                }
-            }
-        },
-        "ignore": {
-            "type": "array",
-            "items": {
-                "type": "string"
-            },
-            "default": [
-                ".git",
-                ".vscode",
-                "node_modules",
-                ".ftpsync.json"
+            "required": [
+                "name",
+                "host",
+                "username",
+                "remotePath"
             ],
-            "description": "Glob patterns for files/folders to ignore"
-        },
-        "useGitIgnore": {
-            "type": "boolean",
-            "default": true,
-            "description": "Apply .gitignore rules when syncing"
-        },
-        "secure": {
-            "type": "boolean",
-            "default": false,
-            "description": "Use FTPS (FTP over TLS) for FTP connections only"
-        },
-        "secureOptions": {
-            "type": "object",
-            "description": "TLS options for FTPS connections (used when protocol is \"ftp\" and secure is true)",
             "properties": {
-                "rejectUnauthorized": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Reject unauthorized certificates"
-                },
-                "caPath": {
+                "name": {
                     "type": "string",
-                    "description": "Path to a CA certificate file"
+                    "minLength": 1,
+                    "description": "Anzeigename dieses Profils. Pflichtfeld ab v2.0.0, damit mehrere Profile im selben Workspace unterscheidbar bleiben (Statusbar, Output-Channel, Explorer)."
                 },
-                "certPath": {
+                "direction": {
                     "type": "string",
-                    "description": "Path to a client certificate file"
+                    "enum": [
+                        "localToRemote",
+                        "remoteToLocal",
+                        "bidirectional"
+                    ],
+                    "default": "localToRemote",
+                    "description": "Sync-Richtung. 'localToRemote' ist der Standard und wird ab v2.0.0 produktiv unterstuetzt. 'remoteToLocal' und 'bidirectional' werden ab v2.0.0 ohne Fehler geladen, fuehren aber noch keine Transfers aus — die Implementierung der Spiegel-Logik folgt in einem spaeteren 2.x-Release."
                 },
-                "keyPath": {
+                "protocol": {
                     "type": "string",
-                    "description": "Path to a client private key file"
+                    "enum": [
+                        "ftp",
+                        "sftp"
+                    ],
+                    "default": "sftp",
+                    "description": "Protokoll fuer die Verbindung (SFTP ist sicherer und empfohlen)."
+                },
+                "host": {
+                    "type": "string",
+                    "description": "Hostname oder IP-Adresse des Servers."
+                },
+                "port": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 65535,
+                    "description": "Port-Nummer (Standard: 21 fuer FTP, 22 fuer SFTP)."
+                },
+                "username": {
+                    "type": "string",
+                    "description": "Benutzername fuer die Anmeldung."
+                },
+                "password": {
+                    "type": "string",
+                    "description": "Passwort fuer die Anmeldung (nicht empfohlen, stattdessen privateKeyPath verwenden)."
+                },
+                "privateKeyPath": {
+                    "type": "string",
+                    "description": "Pfad zur privaten SSH-Schluesseldatei (SFTP)."
                 },
                 "passphrase": {
                     "type": "string",
-                    "description": "Passphrase for the encrypted client private key"
+                    "description": "Passphrase fuer den verschluesselten SSH-Schluessel."
                 },
-                "minVersion": {
+                "remotePath": {
                     "type": "string",
-                    "enum": [
-                        "TLSv1.2",
-                        "TLSv1.3"
+                    "description": "Remote-Verzeichnis, mit dem synchronisiert wird."
+                },
+                "localPath": {
+                    "type": "string",
+                    "default": ".",
+                    "description": "Lokales Verzeichnis relativ zum Workspace (Standard: Workspace-Root)."
+                },
+                "uploadOnSave": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Dateien beim Speichern automatisch hochladen."
+                },
+                "watcher": {
+                    "type": "object",
+                    "description": "File-Watcher-Konfiguration fuer dieses Profil.",
+                    "properties": {
+                        "enabled": {
+                            "type": "boolean",
+                            "default": true,
+                            "description": "File-Watcher aktivieren."
+                        },
+                        "files": {
+                            "oneOf": [
+                                {
+                                    "type": "string",
+                                    "description": "Glob-Pattern fuer zu ueberwachende Dateien."
+                                },
+                                {
+                                    "type": "boolean",
+                                    "const": false,
+                                    "description": "File-Watching deaktivieren."
+                                }
+                            ],
+                            "default": "**/*",
+                            "description": "Glob-Pattern oder false zum Deaktivieren."
+                        },
+                        "autoUpload": {
+                            "type": "boolean",
+                            "default": true,
+                            "description": "Geaenderte Dateien automatisch hochladen."
+                        },
+                        "autoDelete": {
+                            "type": "boolean",
+                            "default": false,
+                            "description": "Geloeschte lokale Dateien auch auf dem Server loeschen. Vorsicht: Datenverlust moeglich."
+                        }
+                    }
+                },
+                "ignore": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "default": [
+                        ".git",
+                        ".vscode",
+                        "node_modules",
+                        ".ftpsync.json"
                     ],
-                    "description": "Minimum TLS version"
+                    "description": "Glob-Patterns fuer Dateien/Ordner, die ignoriert werden sollen."
                 },
-                "maxVersion": {
-                    "type": "string",
-                    "enum": [
-                        "TLSv1.2",
-                        "TLSv1.3"
-                    ],
-                    "description": "Maximum TLS version"
+                "useGitIgnore": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": ".gitignore-Regeln zusaetzlich anwenden."
                 },
-                "ciphers": {
-                    "type": "string",
-                    "description": "OpenSSL cipher list"
+                "secure": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "FTPS (FTP ueber TLS) verwenden — nur fuer protocol: 'ftp' relevant."
                 },
-                "servername": {
-                    "type": "string",
-                    "description": "TLS server name indication (SNI)"
+                "secureOptions": {
+                    "type": "object",
+                    "description": "TLS-Optionen fuer FTPS-Verbindungen.",
+                    "properties": {
+                        "rejectUnauthorized": {
+                            "type": "boolean",
+                            "default": true,
+                            "description": "Ungueltige Zertifikate ablehnen."
+                        },
+                        "caPath": {
+                            "type": "string",
+                            "description": "Pfad zur CA-Zertifikatsdatei."
+                        },
+                        "certPath": {
+                            "type": "string",
+                            "description": "Pfad zur Client-Zertifikatsdatei."
+                        },
+                        "keyPath": {
+                            "type": "string",
+                            "description": "Pfad zur Client-Privatsschluesseldatei."
+                        },
+                        "passphrase": {
+                            "type": "string",
+                            "description": "Passphrase fuer den Client-Privatsschluessel."
+                        },
+                        "minVersion": {
+                            "type": "string",
+                            "enum": [
+                                "TLSv1.2",
+                                "TLSv1.3"
+                            ],
+                            "description": "Minimale TLS-Version."
+                        },
+                        "maxVersion": {
+                            "type": "string",
+                            "enum": [
+                                "TLSv1.2",
+                                "TLSv1.3"
+                            ],
+                            "description": "Maximale TLS-Version."
+                        },
+                        "ciphers": {
+                            "type": "string",
+                            "description": "OpenSSL-Cipher-Liste."
+                        },
+                        "servername": {
+                            "type": "string",
+                            "description": "TLS-Server-Name-Indikation (SNI)."
+                        },
+                        "secureProtocol": {
+                            "type": "string",
+                            "description": "Explizite TLS-Protokoll-Ueberschreibung fuer Node.js."
+                        }
+                    }
                 },
-                "secureProtocol": {
-                    "type": "string",
-                    "description": "Explicit TLS protocol override for Node.js"
+                "timeout": {
+                    "type": "integer",
+                    "default": 30000,
+                    "description": "Verbindungs-Timeout in Millisekunden."
+                },
+                "debug": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Ausfuehrliches Debug-Logging aktivieren."
                 }
             }
-        },
-        "timeout": {
-            "type": "integer",
-            "default": 30000,
-            "description": "Connection timeout in milliseconds"
-        },
-        "concurrency": {
-            "type": "integer",
-            "default": 3,
-            "minimum": 1,
-            "maximum": 10,
-            "description": "Number of concurrent file transfers"
-        },
-        "debug": {
-            "type": "boolean",
-            "default": false,
-            "description": "Enable debug logging"
         }
     }
 }

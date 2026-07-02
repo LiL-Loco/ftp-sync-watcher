@@ -5,6 +5,31 @@ Alle wichtigen Änderungen an diesem Projekt werden in dieser Datei dokumentiert
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt verwendet [Semantic Versioning](https://semver.org/lang/de/).
 
+## [2.0.0] - 2026-07-02
+
+### ⚠️ Breaking Changes
+
+- **Multi-Profil-Konfiguration**: `.ftpsync.json` verwendet jetzt das Top-Level-Schema `{ "profiles": [ ... ] }`. Eine bestehende flache Konfiguration wird beim Laden **automatisch** in ein einzelnes Profil mit Namen `default` migriert — bestehende Setups bleiben ohne Eingriff funktionsfähig.
+- **`concurrency` entfernt**: Das Profil-Feld `concurrency` und der entsprechende Parameter in `OperationQueue` sind entfallen. Pro Profil läuft jetzt eine eigene `ConnectionPool`-Sequenz mit einem internen Mutex (`DEFAULT_CONCURRENCY = 1`). Die Serialisierung pro Server-Host ist robuster als eine frei wählbare Parallelität und verhindert weiterhin `basic-ftp`'s "task already running"-Fehler.
+- **`direction` ist Pflicht-Semantik**: Neue Profile können explizit `localToRemote` (Default), `remoteToLocal` oder `bidirectional` setzen. Bidirektionaler Sync wird umgesetzt, indem **zwei Profile** (eines pro Richtung) angelegt werden — ein einzelnes Profil mit `direction: 'bidirectional'` bleibt als Vorgriff auf eine spaetere Implementierung reserviert.
+
+### ✨ Hinzugefügt
+
+- **Mehrere Profile pro Workspace**: Eine `.ftpsync.json` kann jetzt beliebig viele unabhaengige FTP/SFTP-Verbindungen enthalten. Pro Profil laufen eigene `ConnectionPool`, `IgnoreHandler` und `OperationQueue`-Sequenz.
+- **Pro-URI-Profil-Aufloesung**: `ConfigManager.getProfileForUri(uri)` liefert das spezifischste Profil (laengstes passendes `localPath`-Praefix) fuer eine Datei oder einen Ordner. Upload-on-Save, manueller Upload/Download und der FTP-Explorer nutzen denselben Aufloeser.
+- **Automatische Legacy-Migration**: `migrateLegacyConfig()` erkennt das alte flache Schema und wickelt es lautlos in `{ profiles: [obj] }` mit `name: "default"` ein. `concurrency` wird beim Migrieren verworfen.
+- **Strikte Profil-Namen**: Profile muessen jetzt einen `name` haben — die JSON-Schema-Validierung lehnt ansonsten die Konfiguration ab.
+- **Multi-Profil-Statusanzeige**: Die Statusbar zeigt bei mehr als einem aktiven Profil einen Suffix wie `Watching (3 profiles)` bzw. `Syncing (3 profiles) ...`.
+- **JSDoc-Kontrakte**: Alle zentralen Klassen (`ConnectionPool`, `OperationQueue`, `FileWatcher`, `ConfigManager`) tragen jetzt Klassen-Header, die ihre Verantwortlichkeit und ihre ADR-0001-Schicht explizit benennen.
+
+### 🔧 Behoben
+
+- Die heimliche, oft unnoetige Parallelisierung pro Pool ist weg — Operationen werden pro Profil seriell ausgefuehrt, was Verbindungsabbrueche und Race-Conditions reduziert.
+
+### 📝 Dokumentation
+
+- PRD in `docs/PRD-multi-profile.md` dokumentiert Architektur, Migrationsstrategie und das Verhalten der drei Retry-Schichten.
+
 ## [1.1.5] - 2026-03-31
 
 ### ✨ Hinzugefügt

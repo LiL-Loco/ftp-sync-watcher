@@ -16,26 +16,39 @@ export interface QueuedOperation<T = unknown> {
 export type QueueStatus = 'idle' | 'processing' | 'paused' | 'error';
 
 /**
- * Operation queue with prioritization and timeout handling
- * Prevents operations from hanging indefinitely
- * Uses sequential processing by default to avoid connection overload
+ * OperationQueue ist *ausschliesslich* ein Sequencing-Mechanismus: sie ordnet
+ * eingehende Operationen nach Prioritaet und Reihenfolge und reicht sie
+ * *sequentiell* an die zugehoerigen ConnectionPools weiter.
+ *
+ * Retry-Logik und Connection-Slot-Semantik werden BEWUSST an ConnectionPool
+ * bzw. globalConnectionManager delegiert (siehe ADR-0001). Die absichtliche
+ * Nicht-Konsolidierung ermoeglicht die bewahrten Sicherheitsmargen gegen
+ * drei unabhaengige Fehlerklassen:
+ *   - FTP 530 "max connections"  -> globalConnectionManager
+ *   - basic-ftp "task already running" -> ConnectionPool-Mutex
+ *   - Ctrl+S-Spam in 1.1.2 -> OperationQueue (Debouncing + Sequenzierung)
+ *
+ * Sequenzielle Abarbeitung (interner Concurrency-Wert fest auf 1) verhindert
+ * parallele FTP-Operationen, die basis-ftp- und Server-seitige Probleme
+ * ausloesen wuerden. Der fruehere "concurrency"-Konfigurationswert wurde in
+ * v2.0.0 entfernt; das Profil enthaelt kein entsprechendes Feld mehr.
  */
+const DEFAULT_CONCURRENCY = 1;
+
 export class OperationQueue extends EventEmitter {
     private queue: QueuedOperation[] = [];
     private processing = false;
     private status: QueueStatus = 'idle';
-    private concurrency = 1; // Default to 1 for sequential processing
+    private readonly concurrency = DEFAULT_CONCURRENCY;
     private activeOperations = 0;
     private operationCounter = 0;
     private isPaused = false;
     private defaultTimeout = 30000;
     private maxQueueSize = 100;
-    private operationDelay = 100; // Small delay between operations to prevent flooding
+    private operationDelay = 100;
 
-    constructor(concurrency = 1, defaultTimeout = 30000) {
+    constructor(defaultTimeout = 30000) {
         super();
-        // Limit concurrency to 1 to prevent connection issues
-        this.concurrency = Math.min(concurrency, 1);
         this.defaultTimeout = defaultTimeout;
     }
 

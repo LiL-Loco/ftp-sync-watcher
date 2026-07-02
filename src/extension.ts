@@ -31,10 +31,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         context.subscriptions.push({ dispose: () => configManager.dispose() });
 
         // Set context for views welcome
-        vscode.commands.executeCommand('setContext', 'ftpSync.hasConfig', configManager.hasConfigs());
+        vscode.commands.executeCommand('setContext', 'ftpSync.hasConfig', configManager.hasProfiles());
 
         // Set initial status bar state based on config existence
-        if (configManager.hasConfigs()) {
+        if (configManager.hasProfiles()) {
             statusBar.setState('idle');
         } else {
             statusBar.setState('unconfigured');
@@ -96,10 +96,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         // Auto-start watcher if configured
         await commandHandler.autoStart();
 
-        // Set debug mode from config
-        const configs = configManager.getAllConfigs();
-        for (const config of configs.values()) {
-            if (config.debug) {
+        // Set debug mode from first profile with debug=true
+        const profiles = configManager.getAllProfiles();
+        for (const profile of profiles.values()) {
+            if (profile.debug) {
                 Logger.setDebugMode(true);
                 break;
             }

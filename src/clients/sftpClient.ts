@@ -1,7 +1,7 @@
 import SftpClient from 'ssh2-sftp-client';
 import * as fs from 'fs';
 import * as path from 'path';
-import { FtpSyncConfig } from '../types';
+import { FtpSyncProfile } from '../types';
 import { Logger, normalizePath, getParentDir } from '../utils';
 import { RemoteClient, TransferResult, RemoteFileInfo } from './remoteClient';
 
@@ -11,7 +11,7 @@ import { RemoteClient, TransferResult, RemoteFileInfo } from './remoteClient';
 export class SftpClientWrapper extends RemoteClient {
     private client: SftpClient;
 
-    constructor(config: FtpSyncConfig) {
+    constructor(config: FtpSyncProfile) {
         super(config);
         this.client = new SftpClient();
     }

@@ -1,34 +1,50 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { FtpSyncConfig, mergeWithDefaults } from '../types';
-import { Logger, showInfoMessage, showSuccessMessage, showErrorMessage } from '../utils';
+import {
+    FtpSyncProfile,
+    FtpSyncConfigFile,
+    migrateLegacyConfig,
+    mergeProfileWithDefaults
+} from '../types';
+import { Logger, showInfoMessage, showSuccessMessage, showErrorMessage, resolveProfileByLongestPrefix } from '../utils';
 
 const CONFIG_FILENAME = '.ftpsync.json';
 const CONFIG_DIR = '.vscode';
 
 /**
- * Manages FTP Sync configuration files
+ * Verwaltet die .ftpsync.json-Dateien aller Workspace-Folder. Seit v2.0.0
+ * enthaelt jede Konfiguration eine Liste von Profilen statt eines einzelnen
+ * Konfigurationsobjekts. Aeltere Flach-Objekte werden beim Laden still
+ * migriert (siehe migrateLegacyConfig in types/config.ts).
+ *
+ * Pro Workspace werden die Profile in einer Map gehalten. Profile sind
+ * eindeutig identifizierbar durch ihren Namen. Die Profile-Identitaet ueber
+ * Workspaces hinweg ist "absoluter Pfad der Config-Datei + Profil-Name".
  */
 export class ConfigManager {
-    private configs: Map<string, FtpSyncConfig> = new Map();
+    private profiles: Map<string, Map<string, FtpSyncProfile>> = new Map();
     private configWatchers: vscode.FileSystemWatcher[] = [];
     private watcherDisposables: vscode.Disposable[] = [];
 
     constructor() {}
 
     /**
-     * Initialize config manager and load all configurations
+     * Initialisiert den ConfigManager und laedt alle Konfigurationen.
+     * Idempotent: ein zweiter Aufruf gibt bestehende Watcher frei und baut
+     * sie neu auf, sodass kein Listener-Leak entsteht.
      */
     public async initialize(): Promise<void> {
+        this.disposeWatchers();
         await this.loadAllConfigs();
         this.setupConfigWatchers();
     }
 
     /**
-     * Dispose all watchers
+     * Gibt nur die File-Watcher-Disposables frei, ohne die Profil-Maps zu
+     * beruehren. Wird von initialize() und dispose() gemeinsam genutzt.
      */
-    public dispose(): void {
+    private disposeWatchers(): void {
         this.watcherDisposables.forEach(d => d.dispose());
         this.watcherDisposables = [];
         this.configWatchers.forEach(w => w.dispose());
@@ -36,14 +52,22 @@ export class ConfigManager {
     }
 
     /**
-     * Get the config file path for a workspace folder
+     * Gibt alle File-Watcher und Event-Listener frei.
+     */
+    public dispose(): void {
+        this.disposeWatchers();
+    }
+
+    /**
+     * Pfad zur Konfigurationsdatei fuer einen Workspace-Folder.
      */
     private getConfigPath(folderPath: string): string {
         return path.join(folderPath, CONFIG_DIR, CONFIG_FILENAME);
     }
 
     /**
-     * Resolve an optional config path relative to the workspace folder.
+     * Loest einen optionalen Pfad (z.B. TLS-Zertifikate) gegen den Workspace-
+     * Folder auf.
      */
     private resolveOptionalPath(folderPath: string, filePath?: string): string | undefined {
         if (!filePath) {
@@ -58,7 +82,7 @@ export class ConfigManager {
     }
 
     /**
-     * Load all config files from workspace folders
+     * Laedt alle Konfigurationen aus allen Workspace-Foldern.
      */
     private async loadAllConfigs(): Promise<void> {
         const workspaceFolders = vscode.workspace.workspaceFolders;
@@ -72,51 +96,49 @@ export class ConfigManager {
     }
 
     /**
-     * Load config for a specific workspace folder
+     * Laedt die Profile fuer einen bestimmten Workspace-Folder. Liefert die
+     * Profil-Map (Key = Profil-Name) oder null, falls keine Konfiguration
+     * existiert.
+     *
+     * Die Migration aus dem Legacy-Format (flaches Objekt) geschieht
+     * automatisch und lautlos. Ein einzelnes migriertes Profil traegt den
+     * Namen LEGACY_MIGRATION_PROFILE_NAME.
      */
-    public async loadConfigForFolder(folderPath: string): Promise<FtpSyncConfig | null> {
+    public async loadConfigForFolder(folderPath: string): Promise<Map<string, FtpSyncProfile> | null> {
         const configPath = this.getConfigPath(folderPath);
-        
+
         try {
             if (!fs.existsSync(configPath)) {
                 Logger.debug(`No config file found at ${configPath}`);
+                this.profiles.delete(folderPath);
                 return null;
             }
 
             const content = fs.readFileSync(configPath, 'utf-8');
-            // Parse JSONC (JSON with Comments) by stripping comments
+            // JSONC: Kommentare muessen entfernt werden, bevor JSON.parse laeuft.
             const jsonContent = this.stripJsonComments(content);
-            const rawConfig = JSON.parse(jsonContent);
-            const config = mergeWithDefaults(rawConfig);
-            
-            // Resolve local path relative to workspace folder
-            if (config.localPath && !path.isAbsolute(config.localPath)) {
-                config.localPath = path.join(folderPath, config.localPath);
-            } else if (!config.localPath) {
-                config.localPath = folderPath;
+            const rawObject = JSON.parse(jsonContent);
+
+            // Stille Migration: Legacy-Shape (flaches Objekt ohne 'profiles')
+            // wird hier in den neuen Container umgepackt.
+            const configFile = migrateLegacyConfig(rawObject) as FtpSyncConfigFile;
+
+            if (!configFile.profiles || configFile.profiles.length === 0) {
+                Logger.warn(`No profiles found in ${configPath}`);
+                this.profiles.delete(folderPath);
+                return null;
             }
 
-            // Resolve TLS file paths relative to workspace folder
-            if (config.secureOptions) {
-                config.secureOptions.caPath = this.resolveOptionalPath(folderPath, config.secureOptions.caPath);
-                config.secureOptions.certPath = this.resolveOptionalPath(folderPath, config.secureOptions.certPath);
-                config.secureOptions.keyPath = this.resolveOptionalPath(folderPath, config.secureOptions.keyPath);
-
-                for (const tlsFilePath of [
-                    config.secureOptions.caPath,
-                    config.secureOptions.certPath,
-                    config.secureOptions.keyPath
-                ]) {
-                    if (tlsFilePath && !fs.existsSync(tlsFilePath)) {
-                        Logger.warn(`Configured TLS file not found: ${tlsFilePath}`);
-                    }
-                }
+            const profileMap = new Map<string, FtpSyncProfile>();
+            for (const rawProfile of configFile.profiles) {
+                const profile = this.prepareProfile(folderPath, rawProfile);
+                profileMap.set(profile.name, profile);
             }
 
-            this.configs.set(folderPath, config);
-            Logger.info(`Loaded configuration from ${configPath}`);
-            
-            return config;
+            this.profiles.set(folderPath, profileMap);
+            Logger.info(`Loaded ${profileMap.size} profile(s) from ${configPath}`);
+
+            return profileMap;
         } catch (error) {
             Logger.error(`Failed to load config from ${configPath}: ${(error as Error).message}`);
             showErrorMessage(`FTP Sync: Failed to load configuration - ${(error as Error).message}`);
@@ -125,8 +147,53 @@ export class ConfigManager {
     }
 
     /**
-     * Strip comments from JSONC content
-     * Supports single-line (//) and multi-line comments
+     * Wendet Defaults an, loest relative Pfade auf und prueft TLS-Pfade.
+     * Liefert eine NEUE Profil-Instanz; der uebergebene rawProfile bleibt
+     * unveraendert (Immutability-Garantie fuer Aufrufer und Tests).
+     */
+    private prepareProfile(folderPath: string, rawProfile: Partial<FtpSyncProfile>): FtpSyncProfile {
+        const merged = mergeProfileWithDefaults(rawProfile);
+
+        // Lokaler Pfad wird gegen den Workspace-Folder aufgeloest.
+        let resolvedLocalPath: string;
+        if (merged.localPath && !path.isAbsolute(merged.localPath)) {
+            resolvedLocalPath = path.join(folderPath, merged.localPath);
+        } else if (!merged.localPath) {
+            resolvedLocalPath = folderPath;
+        } else {
+            resolvedLocalPath = merged.localPath;
+        }
+
+        // TLS-Dateien ebenfalls relativ aufloesen und Existenz pruefen.
+        let resolvedSecureOptions = merged.secureOptions;
+        if (merged.secureOptions) {
+            resolvedSecureOptions = {
+                ...merged.secureOptions,
+                caPath: this.resolveOptionalPath(folderPath, merged.secureOptions.caPath),
+                certPath: this.resolveOptionalPath(folderPath, merged.secureOptions.certPath),
+                keyPath: this.resolveOptionalPath(folderPath, merged.secureOptions.keyPath)
+            };
+
+            for (const tlsFilePath of [
+                resolvedSecureOptions.caPath,
+                resolvedSecureOptions.certPath,
+                resolvedSecureOptions.keyPath
+            ]) {
+                if (tlsFilePath && !fs.existsSync(tlsFilePath)) {
+                    Logger.warn(`Configured TLS file not found: ${tlsFilePath}`);
+                }
+            }
+        }
+
+        return {
+            ...merged,
+            localPath: resolvedLocalPath,
+            secureOptions: resolvedSecureOptions
+        };
+    }
+
+    /**
+     * Entfernt Kommentare aus JSONC-Inhalt (single-line und multi-line).
      */
     private stripJsonComments(content: string): string {
         let result = '';
@@ -173,20 +240,20 @@ export class ConfigManager {
             if (inMultiLineComment) {
                 if (char === '*' && nextChar === '/') {
                     inMultiLineComment = false;
-                    i++; // Skip the '/'
+                    i++; // '/' ueberspringen
                 }
                 continue;
             }
 
             if (char === '/' && nextChar === '/') {
                 inSingleLineComment = true;
-                i++; // Skip the second '/'
+                i++; // zweites '/' ueberspringen
                 continue;
             }
 
             if (char === '/' && nextChar === '*') {
                 inMultiLineComment = true;
-                i++; // Skip the '*'
+                i++; // '*' ueberspringen
                 continue;
             }
 
@@ -197,7 +264,9 @@ export class ConfigManager {
     }
 
     /**
-     * Setup file watchers for config files
+     * Setzt File-Watcher auf alle Konfigurationsdateien. Bei jeder Aenderung
+     * wird die gesamte Profil-Map neu geladen — die Datei koennte strukturell
+     * (Profile hinzufuegen/entfernen) geaendert worden sein.
      */
     private setupConfigWatchers(): void {
         const workspaceFolders = vscode.workspace.workspaceFolders;
@@ -221,7 +290,7 @@ export class ConfigManager {
                 watcher.onDidCreate(async (uri) => {
                     Logger.info(`Config file created: ${uri.fsPath}`);
                     await this.loadConfigForFolder(folder.uri.fsPath);
-                    vscode.commands.executeCommand('setContext', 'ftpSync.hasConfig', this.hasConfigs());
+                    vscode.commands.executeCommand('setContext', 'ftpSync.hasConfig', this.hasProfiles());
                     showInfoMessage('FTP Sync: Configuration loaded');
                 })
             );
@@ -229,8 +298,8 @@ export class ConfigManager {
             this.watcherDisposables.push(
                 watcher.onDidDelete((uri) => {
                     Logger.info(`Config file deleted: ${uri.fsPath}`);
-                    this.configs.delete(folder.uri.fsPath);
-                    vscode.commands.executeCommand('setContext', 'ftpSync.hasConfig', this.hasConfigs());
+                    this.profiles.delete(folder.uri.fsPath);
+                    vscode.commands.executeCommand('setContext', 'ftpSync.hasConfig', this.hasProfiles());
                 })
             );
 
@@ -239,56 +308,114 @@ export class ConfigManager {
     }
 
     /**
-     * Get config for a specific workspace folder
+     * Liefert die Profil-Map eines Workspace-Folders.
      */
-    public getConfig(folderPath: string): FtpSyncConfig | undefined {
-        return this.configs.get(folderPath);
+    public getProfilesForFolder(folderPath: string): Map<string, FtpSyncProfile> | undefined {
+        return this.profiles.get(folderPath);
     }
 
     /**
-     * Get config for a file URI
+     * Liefert das Profil, das fuer eine gegebene Datei-URI zustaendig ist.
+     * Die Zuordnung erfolgt ueber die localPath der Profile: das Profil, dessen
+     * localPath den URI-Pfad enthaelt, gewinnt. Bei Mehrdeutigkeit gewinnt
+     * das Profil mit dem laengsten localPath (spezifischste Zuordnung).
+     *
+     * Liefert `undefined`, falls die URI ausserhalb aller localPath-Bereiche
+     * liegt. Aufrufer MUESSEN diesen Fall explizit behandeln (z.B. Upload
+     * ueberspringen), anstatt auf ein "erstes Profil" als Fallback
+     * zurueckzufallen — das wuerde Uploads auf den falschen Server
+     * ausloesen.
      */
-    public getConfigForUri(uri: vscode.Uri): FtpSyncConfig | undefined {
+    public getProfileForUri(uri: vscode.Uri): FtpSyncProfile | undefined {
         const workspaceFolder = vscode.workspace.getWorkspaceFolder(uri);
         if (!workspaceFolder) {
             return undefined;
         }
-        return this.configs.get(workspaceFolder.uri.fsPath);
+
+        const profileMap = this.profiles.get(workspaceFolder.uri.fsPath);
+        if (!profileMap || profileMap.size === 0) {
+            return undefined;
+        }
+
+        const profiles = Array.from(profileMap.values());
+        const match = resolveProfileByLongestPrefix(uri.fsPath, profiles);
+        if (!match) {
+            return undefined;
+        }
+        return profiles.find(p => p.localPath === match.localPath);
     }
 
     /**
-     * Get all loaded configurations
+     * Liefert alle Profile aller Workspace-Folder. Key ist "workspacePfad|name",
+     * damit profile-IDs ueber Workspaces hinweg eindeutig bleiben.
      */
-    public getAllConfigs(): Map<string, FtpSyncConfig> {
-        return this.configs;
+    public getAllProfiles(): Map<string, FtpSyncProfile> {
+        const result = new Map<string, FtpSyncProfile>();
+        for (const [folderPath, profileMap] of this.profiles.entries()) {
+            for (const [profileName, profile] of profileMap.entries()) {
+                result.set(`${folderPath}|${profileName}`, profile);
+            }
+        }
+        return result;
     }
 
     /**
-     * Check if any config is loaded
+     * Liefert die Profile eines Workspace-Folders, eingefroren als Map.
      */
-    public hasConfigs(): boolean {
-        return this.configs.size > 0;
+    public getProfiles(workspacePath: string): Map<string, FtpSyncProfile> {
+        return this.profiles.get(workspacePath) ?? new Map();
     }
 
     /**
-     * Create a new config file in .vscode folder
+     * Liefert true, sobald mindestens ein Profil in irgendeinem Workspace
+     * geladen ist.
+     */
+    public hasProfiles(): boolean {
+        for (const profileMap of this.profiles.values()) {
+            if (profileMap.size > 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Liefert die Anzahl der Profile ueber alle Workspaces hinweg.
+     */
+    public getProfileCount(): number {
+        let total = 0;
+        for (const profileMap of this.profiles.values()) {
+            total += profileMap.size;
+        }
+        return total;
+    }
+
+    /**
+     * Liefert die Anzahl der Profile in einem bestimmten Workspace.
+     */
+    public getProfileCountForFolder(folderPath: string): number {
+        return this.profiles.get(folderPath)?.size ?? 0;
+    }
+
+    /**
+     * Erstellt eine neue Konfigurationsdatei im .vscode-Ordner des Workspace-
+     * Folders. Ab v2.0.0 wird die neue Container-Form ({ profiles: [...] })
+     * mit einem Beispiel-Profil erzeugt, plus deutsche Inline-Kommentare.
      */
     public async createConfig(folderPath: string): Promise<void> {
         const vscodeDir = path.join(folderPath, CONFIG_DIR);
         const configPath = this.getConfigPath(folderPath);
-        
-        // Create .vscode directory if it doesn't exist
+
         if (!fs.existsSync(vscodeDir)) {
             fs.mkdirSync(vscodeDir, { recursive: true });
         }
-        
+
         if (fs.existsSync(configPath)) {
             const overwrite = await vscode.window.showWarningMessage(
                 'Configuration file already exists. Overwrite?',
                 'Yes', 'No'
             );
             if (overwrite !== 'Yes') {
-                // Just open the existing file
                 const doc = await vscode.workspace.openTextDocument(configPath);
                 await vscode.window.showTextDocument(doc);
                 return;
@@ -300,162 +427,141 @@ export class ConfigManager {
     // ║                    FTP/SFTP Sync Watcher Konfiguration                   ║
     // ╠══════════════════════════════════════════════════════════════════════════╣
     // ║  Diese Datei konfiguriert die automatische Synchronisation mit einem    ║
-    // ║  FTP- oder SFTP-Server. Passe die Werte an deine Server-Einstellungen   ║
-    // ║  an. Für IntelliSense und Validierung wird das JSON-Schema verwendet.   ║
+    // ║  oder mehreren FTP-/SFTP-Servern. Jedes Element im 'profiles'-Array     ║
+    // ║  beschreibt ein eigenstaendiges Sync-Ziel.                               ║
+    // ║                                                                          ║
+    // ║  IntelliSense & Validierung liefert das JSON-Schema (siehe              ║
+    // ║  schemas/ftpsync.schema.json).                                           ║
     // ╚══════════════════════════════════════════════════════════════════════════╝
 
-    // ─────────────────────────────────────────────────────────────────────────────
-    // VERBINDUNGSEINSTELLUNGEN
-    // ─────────────────────────────────────────────────────────────────────────────
+    "profiles": [
 
-    // Anzeigename für diese Verbindung (frei wählbar)
-    "name": "My Server",
+        {
+            // ─────────────────────────────────────────────────────────────────
+            // PROFIL-NAME (Pflichtfeld ab v2.0.0)
+            // ─────────────────────────────────────────────────────────────────
+            // Frei waehlbarer Anzeigename. Wird in Statusbar, Output-Channel
+            // und Explorer-Header verwendet, um mehrere Profile
+            // unterscheidbar zu machen.
+            "name": "My Server",
 
-    // Protokoll: "ftp" oder "sftp" (SFTP ist sicherer und empfohlen)
-    "protocol": "sftp",
+            // Sync-Richtung. Heute produktiv: "localToRemote".
+            // "remoteToLocal" und "bidirectional" werden ohne Fehler geladen,
+            // fuehren aber noch keine Transfers aus (Forward-Kompatibilitaet).
+            "direction": "localToRemote",
 
-    // Hostname oder IP-Adresse des Servers
-    "host": "example.com",
+            // ─────────────────────────────────────────────────────────────────
+            // VERBINDUNGSEINSTELLUNGEN
+            // ─────────────────────────────────────────────────────────────────
 
-    // Port-Nummer (Standard: 21 für FTP, 22 für SFTP)
-    "port": 22,
+            // Protokoll: "ftp" oder "sftp" (SFTP ist sicherer und empfohlen)
+            "protocol": "sftp",
 
-    // ─────────────────────────────────────────────────────────────────────────────
-    // AUTHENTIFIZIERUNG
-    // ─────────────────────────────────────────────────────────────────────────────
+            // Hostname oder IP-Adresse des Servers
+            "host": "example.com",
 
-    // Benutzername für die Anmeldung
-    "username": "username",
+            // Port-Nummer (Standard: 21 fuer FTP, 22 fuer SFTP)
+            "port": 22,
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // OPTION 1: Passwort-Authentifizierung (einfach, aber weniger sicher)
-    // ═══════════════════════════════════════════════════════════════════════════
-    // Passwort für die Anmeldung
-    "password": "",
+            // ─────────────────────────────────────────────────────────────────
+            // AUTHENTIFIZIERUNG
+            // ─────────────────────────────────────────────────────────────────
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // OPTION 2: SSH-Key-Authentifizierung (sicherer, empfohlen für SFTP)
-    // ═══════════════════════════════════════════════════════════════════════════
-    // Pfad zur privaten SSH-Schlüsseldatei
-    // Windows: "C:/Users/DeinName/.ssh/id_rsa"
-    // Mac/Linux: "~/.ssh/id_rsa" oder "/home/user/.ssh/id_rsa"
-    // 
-    // SSH-Key erstellen (falls noch nicht vorhanden):
-    //   ssh-keygen -t rsa -b 4096 -C "deine@email.de"
-    // 
-    // Public Key auf Server kopieren:
-    //   ssh-copy-id -i ~/.ssh/id_rsa.pub user@server.de
-    "privateKeyPath": "",
+            // Benutzername fuer die Anmeldung
+            "username": "username",
 
-    // Passphrase für den SSH-Key (falls der Key passwortgeschützt ist)
-    // Leer lassen wenn der Key keine Passphrase hat
-    "passphrase": "",
+            // OPTION 1: Passwort-Authentifizierung (einfach, weniger sicher)
+            "password": "",
 
-    // ─────────────────────────────────────────────────────────────────────────────
-    // PFAD-EINSTELLUNGEN
-    // ─────────────────────────────────────────────────────────────────────────────
+            // OPTION 2: SSH-Key-Authentifizierung (sicherer, empfohlen fuer SFTP)
+            //   ssh-keygen -t rsa -b 4096 -C "deine@email.de"
+            //   ssh-copy-id -i ~/.ssh/id_rsa.pub user@server.de
+            "privateKeyPath": "",
+            "passphrase": "",
 
-    // Remote-Pfad auf dem Server (absoluter Pfad zum Zielverzeichnis)
-    "remotePath": "/var/www/html",
+            // ─────────────────────────────────────────────────────────────────
+            // PFAD-EINSTELLUNGEN
+            // ─────────────────────────────────────────────────────────────────
 
-    // Lokaler Pfad relativ zum Workspace
-    // "."  = Aktueller Ordner (wo .vscode liegt)
-    // ".." = Übergeordneter Ordner (Workspace-Root)
-    "localPath": "..",
+            // Remote-Pfad auf dem Server (absoluter Pfad zum Zielverzeichnis)
+            "remotePath": "/var/www/html",
 
-    // ─────────────────────────────────────────────────────────────────────────────
-    // AUTOMATISCHE SYNCHRONISATION
-    // ─────────────────────────────────────────────────────────────────────────────
+            // Lokaler Pfad relativ zum Workspace
+            // "."  = Aktueller Ordner (wo .vscode liegt)
+            "localPath": ".",
 
-    // Dateien automatisch beim Speichern hochladen?
-    "uploadOnSave": true,
+            // ─────────────────────────────────────────────────────────────────
+            // AUTOMATISCHE SYNCHRONISATION
+            // ─────────────────────────────────────────────────────────────────
 
-    // File Watcher Konfiguration (überwacht Dateiänderungen)
-    "watcher": {
-        // File Watcher aktivieren?
-        "enabled": true,
+            // Dateien automatisch beim Speichern hochladen?
+            "uploadOnSave": true,
 
-        // Welche Dateien überwachen? (Glob-Pattern)
-        // "**/*" = Alle Dateien in allen Unterordnern
-        // "**/*.php" = Nur PHP-Dateien
-        // "src/**/*" = Nur Dateien im src-Ordner
-        "files": "**/*",
+            // File Watcher Konfiguration (ueberwacht Datei-Aenderungen)
+            "watcher": {
+                "enabled": true,
+                "files": "**/*",
+                "autoUpload": true,
+                "autoDelete": false
+            },
 
-        // Geänderte Dateien automatisch hochladen?
-        "autoUpload": true,
+            // ─────────────────────────────────────────────────────────────────
+            // AUSSCHLUSS-REGELN
+            // ─────────────────────────────────────────────────────────────────
 
-        // Gelöschte Dateien auch auf dem Server löschen?
-        // VORSICHT: Kann zu Datenverlust führen!
-        "autoDelete": false
-    },
+            "ignore": [
+                ".git",
+                ".vscode",
+                "node_modules",
+                ".DS_Store",
+                "*.log"
+            ],
 
-    // ─────────────────────────────────────────────────────────────────────────────
-    // AUSSCHLUSS-REGELN
-    // ─────────────────────────────────────────────────────────────────────────────
+            "useGitIgnore": true,
 
-    // Dateien/Ordner die NICHT synchronisiert werden sollen (Glob-Patterns)
-    "ignore": [
-        ".git",           // Git Repository
-        ".vscode",        // VS Code Einstellungen
-        "node_modules",   // NPM Pakete
-        ".DS_Store",      // macOS Systemdateien
-        "*.log"           // Log-Dateien
-    ],
+            // ─────────────────────────────────────────────────────────────────
+            // ERWEITERTE EINSTELLUNGEN
+            // ─────────────────────────────────────────────────────────────────
 
-    // .gitignore Regeln zusätzlich anwenden?
-    "useGitIgnore": true,
+            // Verbindungs-Timeout in Millisekunden (Standard: 30000)
+            // "timeout": 30000,
 
-    // ─────────────────────────────────────────────────────────────────────────────
-    // ERWEITERTE EINSTELLUNGEN
-    // ─────────────────────────────────────────────────────────────────────────────
+            // FTP ueber TLS (FTPS) verwenden? (nur fuer protocol: "ftp")
+            "secure": false,
 
-    // Verbindungs-Timeout in Millisekunden (Standard: 30000 = 30 Sekunden)
-    // "timeout": 30000,
+            // TLS-Optionen fuer FTPS (nur fuer protocol: "ftp" relevant)
+            // "secureOptions": {
+            //     "rejectUnauthorized": true,
+            //     "caPath": ".certs/ca.pem",
+            //     "certPath": ".certs/client-cert.pem",
+            //     "keyPath": ".certs/client-key.pem"
+            // },
 
-    // FTP über TLS (FTPS) verwenden? (nur für protocol: "ftp")
-    "secure": false,
+            // Debug-Modus fuer ausfuehrliche Logs aktivieren?
+            "debug": false
+        }
 
-    // TLS-Optionen für FTPS (nur für protocol: "ftp" relevant)
-    // "secureOptions": {
-    //     // Zertifikatsprüfung aktiviert lassen - nur für selbstsignierte Setups deaktivieren
-    //     "rejectUnauthorized": true,
-    //
-    //     // Optionale Zertifikatsdateien (relativ zum Workspace oder absolut)
-    //     // "caPath": ".certs/ca.pem",
-    //     // "certPath": ".certs/client-cert.pem",
-    //     // "keyPath": ".certs/client-key.pem",
-    //     // "passphrase": "",
-    //
-    //     // Optionale TLS-Feinabstimmung
-    //     // "minVersion": "TLSv1.2",
-    //     // "maxVersion": "TLSv1.3",
-    //     // "ciphers": "TLS_AES_256_GCM_SHA384:TLS_AES_128_GCM_SHA256",
-    //     // "servername": "ftp.example.com",
-    //     // "secureProtocol": "TLS_method"
-    // },
-
-    // Debug-Modus für ausführliche Logs aktivieren?
-    "debug": false
+        // Weitere Profile koennen hier als weitere Array-Eintraege ergaenzt
+        // werden, z.B. ein zweites Profil fuer einen Staging-Server oder eine
+        // zweite Richtung (bidirektionaler Sync, vgl. ADR-0003).
+    ]
 }`;
 
         fs.writeFileSync(configPath, defaultConfig, 'utf-8');
-        
-        // Load the new config
+
         await this.loadConfigForFolder(folderPath);
-        
-        // Update context for views welcome
+
         vscode.commands.executeCommand('setContext', 'ftpSync.hasConfig', true);
-        
-        // Open the config file for editing
+
         const doc = await vscode.workspace.openTextDocument(configPath);
         await vscode.window.showTextDocument(doc);
-        
+
         Logger.info(`Created config file at ${configPath}`);
         showSuccessMessage('FTP Sync: Configuration file created. Please edit with your server details.', 5000);
     }
 
     /**
-     * Get the workspace folder path for a given URI
+     * Liefert den Workspace-Folder-Pfad fuer eine URI.
      */
     public getWorkspaceFolderPath(uri: vscode.Uri): string | undefined {
         const workspaceFolder = vscode.workspace.getWorkspaceFolder(uri);

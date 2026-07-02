@@ -2,7 +2,7 @@ import * as ftp from 'basic-ftp';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { ConnectionOptions } from 'tls';
-import { FtpSyncConfig } from '../types';
+import { FtpSyncProfile } from '../types';
 import { Logger, normalizePath, getParentDir } from '../utils';
 import { RemoteClient, TransferResult, RemoteFileInfo } from './remoteClient';
 
@@ -12,7 +12,7 @@ import { RemoteClient, TransferResult, RemoteFileInfo } from './remoteClient';
 export class FtpClient extends RemoteClient {
     private client: ftp.Client;
 
-    constructor(config: FtpSyncConfig) {
+    constructor(config: FtpSyncProfile) {
         super(config);
         this.client = new ftp.Client(this.config.timeout);
         
