@@ -1,10 +1,12 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { FtpSyncProfile } from '../types';
-import { Logger, getRelativePath, localToRemotePath, resolveProfileByLongestPrefix } from '../utils';
+import * as fs from 'fs';
+import { FtpSyncProfile, DEFAULT_POLL_INTERVAL_MS, TOMBSTONE_TTL_MS } from '../types';
+import { Logger, getRelativePath, localToRemotePath, remoteToLocalPath, resolveProfileByLongestPrefix } from '../utils';
 import { IgnoreHandler } from './ignoreHandler';
 import { ConnectionPool } from './connectionPool';
 import { OperationQueue } from './operationQueue';
+import { TombstoneStore } from './tombstoneStore';
 
 export type FileChangeType = 'created' | 'changed' | 'deleted';
 
@@ -42,17 +44,32 @@ export interface WatcherStats {
  * Pro ausgeloestem Trigger wird das zustaendige Profil per localPath-
  * Praefix-Match bestimmt; ein Transfer laeuft immer ueber den
  * ConnectionPool dieses Profils. Bidirektionaler Sync ist als ZWEI Profile
- * modelliert (siehe ADR-0003); die zugehoerige Tombstone-Logik wird in
- * einem spaeteren Release angebunden.
+ * modelliert (siehe ADR-0003).
+ *
+ * Sync-Richtungen:
+ *   - localToRemote (Default): klassischer File-Watcher-Pfad. Lokale
+ *     Aenderungen werden hochgeladen. Loeschungen erzeugen einen
+ *     Tombstone, damit ein nachfolgender remoteToLocal-Pull die Datei
+ *     nicht zurueckbringt.
+ *   - remoteToLocal: Polling-basiert (siehe ADR-0002). Der Watcher listet
+ *     das Remote-Verzeichnis periodisch, vergleicht mit dem lokalen State
+ *     und laedt neue/geaenderte Dateien herunter. Tombstones werden vor
+ *     dem Download geprueft.
+ *   - bidirectional: noch nicht implementiert (warnhafter Hinweis beim
+ *     Start, dann Fallback auf den Watcher-Pfad des ersten aktiven
+ *     Profils).
  */
 export class FileWatcher {
     private workspacePath: string;
     private profiles: Map<string, FtpSyncProfile> = new Map();
     private connectionPools: Map<string, ConnectionPool> = new Map();
     private ignoreHandlers: Map<string, IgnoreHandler> = new Map();
+    private tombstoneStores: Map<string, TombstoneStore> = new Map();
     private operationQueue: OperationQueue;
     private watcher: vscode.FileSystemWatcher | undefined;
     private watcherDisposables: vscode.Disposable[] = [];
+    private pollingTimers: Map<string, NodeJS.Timeout> = new Map();
+    private remoteStateCache: Map<string, Map<string, { size: number; modifiedTime: number }>> = new Map();
     private isRunning = false;
     private debounceTimers: Map<string, NodeJS.Timeout> = new Map();
     private pendingOperations: Set<string> = new Set();
@@ -69,11 +86,17 @@ export class FileWatcher {
         isConnected: false,
         queueLength: 0
     };
+    private tombstoneStoreFactory?: (profileName: string) => TombstoneStore | undefined;
 
-    constructor(workspacePath: string, profiles: Map<string, FtpSyncProfile>) {
+    constructor(
+        workspacePath: string,
+        profiles: Map<string, FtpSyncProfile>,
+        options: { tombstoneStoreFactory?: (profileName: string) => TombstoneStore | undefined } = {}
+    ) {
         this.workspacePath = workspacePath;
         this.profiles = profiles;
         this.operationQueue = new OperationQueue(30000);
+        this.tombstoneStoreFactory = options.tombstoneStoreFactory;
 
         for (const [name, profile] of profiles.entries()) {
             this.connectionPools.set(name, new ConnectionPool(profile));
@@ -82,6 +105,11 @@ export class FileWatcher {
                 profile.ignore,
                 profile.useGitIgnore
             ));
+            const tsFactory = this.tombstoneStoreFactory;
+            const store = tsFactory ? tsFactory(name) : undefined;
+            if (store) {
+                this.tombstoneStores.set(name, store);
+            }
         }
     }
 
@@ -106,6 +134,13 @@ export class FileWatcher {
                     continue;
                 }
 
+                if (profile.direction === 'bidirectional') {
+                    Logger.warn(
+                        `Profile "${name}" uses direction "bidirectional" — ` +
+                        `not yet implemented, fallback to localToRemote semantics.`
+                    );
+                }
+
                 const ignoreHandler = this.ignoreHandlers.get(name);
                 if (ignoreHandler) {
                     await ignoreHandler.initialize();
@@ -121,6 +156,17 @@ export class FileWatcher {
                             `Profile "${name}" initial connection failed (will retry on demand): ${(error as Error).message}`
                         );
                     }
+                }
+
+                // Tombstone-Store aufraeumen (veraltete Eintraege).
+                const tsStore = this.tombstoneStores.get(name);
+                if (tsStore) {
+                    await tsStore.prune();
+                }
+
+                // Polling-Loop fuer remoteToLocal-Profile starten.
+                if (profile.direction === 'remoteToLocal' && profile.watcher.enabled) {
+                    this.startPollingLoop(name, profile);
                 }
             }
 
@@ -142,9 +188,9 @@ export class FileWatcher {
             // Events werden auf alle aktiven Profile verteilt: jeder Trigger
             // wird per localPath-Match dem zustaendigen Profil zugeordnet.
             const anyAutoUpload = Array.from(this.profiles.values())
-                .some(p => p.watcher.enabled && p.watcher.autoUpload);
+                .some(p => p.watcher.enabled && p.watcher.autoUpload && p.direction !== 'remoteToLocal');
             const anyAutoDelete = Array.from(this.profiles.values())
-                .some(p => p.watcher.enabled && p.watcher.autoDelete);
+                .some(p => p.watcher.enabled && p.watcher.autoDelete && p.direction !== 'remoteToLocal');
 
             if (anyAutoUpload) {
                 this.watcherDisposables.push(
@@ -172,6 +218,147 @@ export class FileWatcher {
     }
 
     /**
+     * Startet einen Polling-Loop fuer ein remoteToLocal-Profil. Pro Tick
+     * wird das Remote-Verzeichnis gelistet, mit dem letzten Stand
+     * verglichen und neue/geaenderte Dateien werden heruntergeladen.
+     */
+    private startPollingLoop(profileName: string, profile: FtpSyncProfile): void {
+        const intervalMs = profile.watcher.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+        Logger.info(
+            `[${profileName}] Starting remoteToLocal polling loop ` +
+            `(interval=${intervalMs}ms, remote=${profile.remotePath})`
+        );
+
+        const tick = async (): Promise<void> => {
+            if (!this.isRunning) {
+                return;
+            }
+            try {
+                await this.pollOnce(profileName, profile);
+            } catch (error) {
+                Logger.warn(
+                    `[${profileName}] Polling tick failed: ${(error as Error).message}`
+                );
+            }
+        };
+
+        // Erster Tick sofort, dann periodisch.
+        void tick();
+        const timer = setInterval(() => { void tick(); }, intervalMs);
+        this.pollingTimers.set(profileName, timer);
+    }
+
+    /**
+     * Ein einzelner Polling-Tick. Vergleich Remote-State mit Cache und
+     * lokaler Existenz; Downloads werden enqueued.
+     */
+    private async pollOnce(profileName: string, profile: FtpSyncProfile): Promise<void> {
+        const pool = this.connectionPools.get(profileName);
+        const ignoreHandler = this.ignoreHandlers.get(profileName);
+        if (!pool || !ignoreHandler) {
+            return;
+        }
+
+        const remoteEntries = await pool.executeWithRetry(
+            (client) => client.listDirectory(profile.remotePath),
+            `poll list ${profile.remotePath}`
+        );
+
+        const previousState = this.remoteStateCache.get(profileName) ?? new Map();
+        const newState = new Map<string, { size: number; modifiedTime: number }>();
+        const tombstoneStore = this.tombstoneStores.get(profileName);
+
+        for (const entry of remoteEntries) {
+            if (entry.type === 'directory') {
+                continue;
+            }
+            const relativeRemote = getRelativePath(profile.remotePath, entry.path);
+            if (ignoreHandler.isIgnored(relativeRemote)) {
+                continue;
+            }
+            const localPath = remoteToLocalPath(entry.path, profile.remotePath, profile.localPath);
+            newState.set(entry.path, {
+                size: entry.size,
+                modifiedTime: entry.modifiedTime.getTime()
+            });
+
+            const prev = previousState.get(entry.path);
+            const isNew = !prev;
+            const isChanged =
+                !!prev &&
+                (prev.size !== entry.size || prev.modifiedTime !== entry.modifiedTime.getTime());
+            const existsLocally = fs.existsSync(localPath);
+
+            if ((isNew || isChanged) && existsLocally) {
+                // Konflikt: lokal und remote geaendert — wir ueberschreiben
+                // nicht automatisch (Last-Writer-Wins waere falsch, der User
+                // soll entscheiden). Wir ueberspringen.
+                if (isChanged) {
+                    Logger.debug(
+                        `[${profileName}] Conflict on ${entry.path} ` +
+                        `(both sides changed) — skipping`
+                    );
+                    continue;
+                }
+            }
+
+            if ((isNew || isChanged) && tombstoneStore?.has(entry.path)) {
+                Logger.debug(
+                    `[${profileName}] Skipping ${entry.path} (tombstone present)`
+                );
+                continue;
+            }
+
+            if (isNew || isChanged) {
+                Logger.info(
+                    `[${profileName}] Downloading ${relativeRemote} ` +
+                    `(${isNew ? 'new' : 'changed'})`
+                );
+                this.enqueueRemoteDownload(profileName, profile, entry.path, localPath);
+            }
+        }
+
+        this.remoteStateCache.set(profileName, newState);
+    }
+
+    /**
+     * Schliesst einen Remote-Download in die OperationQueue ein. Verwendet
+     * dieselbe Pipeline wie manuelle Downloads, sodass Retry-/Slot-Semantik
+     * konsistent bleibt.
+     */
+    private enqueueRemoteDownload(
+        profileName: string,
+        profile: FtpSyncProfile,
+        remotePath: string,
+        localPath: string
+    ): void {
+        const tsStore = this.tombstoneStores.get(profileName);
+        this.operationQueue.enqueue(
+            async () => {
+                if (tsStore?.has(remotePath)) {
+                    Logger.debug(`[${profileName}] Skipping download (tombstone): ${remotePath}`);
+                    return;
+                }
+                const pool = this.connectionPools.get(profileName);
+                if (!pool) {
+                    return;
+                }
+                const success = await this.downloadFile(remotePath, localPath);
+                if (success && tsStore) {
+                    // Datei ist durch, also existiert der Tombstone nicht
+                    // mehr aus Sicht des Users — entfernen.
+                    await tsStore.remove(remotePath);
+                }
+            },
+            { priority: 1, timeout: 30000 }
+        ).catch((error) => {
+            Logger.error(
+                `[${profileName}] Polling download failed: ${(error as Error).message}`
+            );
+        });
+    }
+
+    /**
      * Stoppt den File-Watcher und gibt alle Ressourcen frei.
      */
     public async stop(): Promise<void> {
@@ -184,6 +371,11 @@ export class FileWatcher {
         this.pendingOperations.clear();
         this.activeUploads.clear();
         this.operationQueue.clear();
+
+        // Polling-Timer stoppen.
+        this.pollingTimers.forEach((timer) => clearInterval(timer));
+        this.pollingTimers.clear();
+        this.remoteStateCache.clear();
 
         this.watcherDisposables.forEach(d => d.dispose());
         this.watcherDisposables = [];
@@ -359,6 +551,20 @@ export class FileWatcher {
             profile.localPath,
             profile.remotePath
         );
+
+        // Tombstone-Hook: bei einer lokalen Loeschung in einem Profil mit
+        // Tombstone-Store den Remote-Pfad markieren, damit ein
+        // remoteToLocal-Pull die Datei nicht zurueckbringt.
+        if (type === 'deleted') {
+            const tsStore = this.tombstoneStores.get(profileName);
+            if (tsStore) {
+                await tsStore.add(remotePath);
+                Logger.debug(
+                    `[${profileName}] Tombstone set for ${remotePath} ` +
+                    `(TTL ${TOMBSTONE_TTL_MS / 1000}s)`
+                );
+            }
+        }
 
         try {
             await pool.executeWithRetry(

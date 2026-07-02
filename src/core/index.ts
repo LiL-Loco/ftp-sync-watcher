@@ -3,3 +3,5 @@ export * from './fileWatcher';
 export * from './ignoreHandler';
 export * from './connectionPool';
 export * from './operationQueue';
+export * from './secretManager';
+export * from './tombstoneStore';
