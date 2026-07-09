@@ -17,9 +17,12 @@ npm run lint            # eslint src --ext ts
 npm run test:unit       # mocha — 57 unit tests in src/test/unit/
 npm test                # alias für npm run test:unit (früher vscode-test — Bug)
 npm run test:integration # vscode-test (Suite existiert noch nicht, vorbereitet)
+npm run bundle          # esbuild-Bundle nach out/extension.js (Production-Modus mit --production)
+npm run package         # vsce package — baut die .vsix (vscode:prepublish ruft compile + bundle auf)
 ```
 
 - Output goes to `out/` (committed-vs-ignored: `*.js`, `*.js.map`, `*.d.ts` are gitignored; `out/` is gitignored too).
+- **Build-Pipeline (zweistufig):** `npm run compile` = `tsc` (Dev + Tests, alles nach `out/`). `vscode:prepublish` = `tsc` + `node esbuild.config.mjs --production` (esbuild ersetzt `out/extension.js` durch das minified Bundle inkl. JS-Deps). Native `ssh2`/`cpu-features` bleiben extern. `npm run package` = `vsce package`. Siehe `esbuild.config.mjs` fuer External-Konfiguration.
 - `.vscode/launch.json` is already configured: **F5** launches an Extension Development Host with the prebuild task.
 - Unit tests live in `src/test/unit/` and are pure Node + mocha — they do **not** require the VS Code test host. Run `npm run test:unit` after `npm run compile`. `vscode-test` (`test:integration`) is reserved for future integration tests that need the real VS Code runtime.
 - `npm test` ist seit v2.0.0 KEIN `vscode-test`-Aufruf mehr, sondern ein Alias für `npm run test:unit`. Hintergrund: `vscode-test` brach mit "Could not find a .vscode-test file" ab, sobald keine Suite existierte.

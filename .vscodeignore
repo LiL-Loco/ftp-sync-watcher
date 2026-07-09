@@ -3,12 +3,25 @@
 src/**
 scripts/**
 .gitignore
+.gitattributes
 .yarnrc
+.yarnrc.yml
+.npmrc
+esbuild.config.mjs
 vsc-extension-quickstart.md
 **/tsconfig.json
+**/tsconfig.*.json
 **/.eslintrc.json
+**/.eslintrc.*.json
+**/tsconfig.tsbuildinfo
+**/*.tsbuildinfo
+
+# Source-Maps: nicht im Distribution-Pack
 **/*.map
-**/*.ts
+
+# TypeScript-Declaration-Files: zur Laufzeit nicht benötigt
+**/*.d.ts
+**/*.d.ts.map
 
 # Repo-interne Hilfsmittel (nicht für End-User)
 .serena/**
@@ -17,35 +30,51 @@ docs/**
 CLAUDE.md
 CONTEXT.md
 test-results/
+coverage/
 
-# Exclude all node_modules, then include only what we need
+# Kompilierte Unit-Tests und tsc-Zwischendateien: der Production-Packaging-
+# Schritt ersetzt out/extension.js durch das esbuild-Bundle. Die uebrigen
+# out/{clients,commands,core,types,ui,utils}/-Dateien sind tsc-Output, der
+# nur fuer die lokale Test-Ausfuehrung (mocha) gebraucht wird.
+out/test/**
+out/clients/**
+out/commands/**
+out/core/**
+out/types/**
+out/ui/**
+out/utils/**
+out/extension.js.map
+
+# Build-Output und Per-Package-Metadata in node_modules
+# (Hinweis: vsce wertet Re-Includes "!" als "komplettes Verzeichnis
+# einbeziehen" und ignoriert .vscodeignore-Regeln im Inneren. Wir
+# muessen daher JEDE Runtime-Datei explizit whitelisten statt ein
+# Verzeichnis-Pattern zu nutzen.)
 node_modules/**
 
-# Runtime dependencies
-!node_modules/basic-ftp/**
-!node_modules/ignore/**
+# --- ssh2 (native C++-Bindings via cpu-features) ---
+!node_modules/ssh2/package.json
+!node_modules/ssh2/lib/index.js
+!node_modules/ssh2/lib/client.js
+!node_modules/ssh2/lib/server.js
+!node_modules/ssh2/lib/agent.js
+!node_modules/ssh2/lib/http-agents.js
+!node_modules/ssh2/lib/keygen.js
+!node_modules/ssh2/lib/utils.js
+!node_modules/ssh2/lib/Channel.js
+!node_modules/ssh2/lib/protocol/Protocol.js
+!node_modules/ssh2/lib/protocol/handlers.js
+!node_modules/ssh2/lib/protocol/handlers.misc.js
+!node_modules/ssh2/lib/protocol/kex.js
+!node_modules/ssh2/lib/protocol/keyParser.js
+!node_modules/ssh2/lib/protocol/SFTP.js
+!node_modules/ssh2/lib/protocol/constants.js
+!node_modules/ssh2/lib/protocol/utils.js
+!node_modules/ssh2/lib/protocol/zlib.js
+!node_modules/ssh2/lib/protocol/node-fs-compat.js
+!node_modules/ssh2/lib/protocol/crypto.js
+!node_modules/ssh2/lib/protocol/crypto/poly1305.js
 
-# ssh2 and all its dependencies
-!node_modules/ssh2/**
-!node_modules/ssh2-sftp-client/**
-!node_modules/asn1/**
-!node_modules/bcrypt-pbkdf/**
-!node_modules/tweetnacl/**
-!node_modules/safer-buffer/**
-!node_modules/cpu-features/**
-
-# ssh2-sftp-client dependencies
-!node_modules/concat-stream/**
-!node_modules/buffer-from/**
-!node_modules/inherits/**
-!node_modules/typedarray/**
-!node_modules/readable-stream/**
-!node_modules/core-util-is/**
-!node_modules/isarray/**
-!node_modules/process-nextick-args/**
-!node_modules/safe-buffer/**
-!node_modules/string_decoder/**
-!node_modules/util-deprecate/**
-!node_modules/promise-retry/**
-!node_modules/err-code/**
-!node_modules/retry/**
+# --- cpu-features (vorkompilierte .node-Binary) ---
+!node_modules/cpu-features/package.json
+!node_modules/cpu-features/lib/index.js
