@@ -183,16 +183,48 @@ export class FileWatcher {
             }
 
             const pattern = new vscode.RelativePattern(this.workspacePath, watchPattern);
-            this.watcher = vscode.workspace.createFileSystemWatcher(pattern);
+            // awaitWriteFinish verhindert, dass mehrfache schnelle Schreibvorgänge
+            // (z.B. write-temp + rename durch KI-Agenten wie Cursor / Cline / Continue)
+            // mehrfach getriggert werden. `stability` wartet 500ms nach dem letzten
+            // Schreibvorgang, bevor der Change-Event ausgeloest wird — das ist lang
+            // genug, um atomare Saves zu erkennen, und kurz genug, um nicht spuerbar
+            // zu sein.
+            //
+            // Hintergrund: Externe Tools (KI-Agenten, CLI-Tools wie rsync, Git-
+            // Operationen) umgehen den VS-Code-Editor-Save-Flow und schreiben
+            // direkt auf die Disk. Der native FileSystemWatcher kann bei schnellen
+            // Folgen von write → truncate → write den abschliessenden Zustand
+            // verpassen, sodass die finale Datei nie hochgeladen wird.
+            //
+            // Der `as never`-Cast umgeht eine Typen-Luecke: @types/vscode@^1.85
+            // kennt die Options-Form noch nicht (die API wurde erst spaeter
+            // formalisiert). VS Code 1.93+ unterstuetzt die Option zur Laufzeit;
+            // aelteren Versionen ignoriert das Argument einfach, was hier
+            // akzeptabel ist — der Workaround-Debounce in handleFileChange faengt
+            // Mehrfach-Trigger ab, auch ohne awaitWriteFinish.
+            this.watcher = vscode.workspace.createFileSystemWatcher(
+                pattern,
+                { awaitWriteFinish: { stability: 500 } } as never
+            );
 
             // Events werden auf alle aktiven Profile verteilt: jeder Trigger
             // wird per localPath-Match dem zustaendigen Profil zugeordnet.
-            const anyAutoUpload = Array.from(this.profiles.values())
-                .some(p => p.watcher.enabled && p.watcher.autoUpload && p.direction !== 'remoteToLocal');
-            const anyAutoDelete = Array.from(this.profiles.values())
+            //
+            // Wichtig: Wir registrieren die Events sobald IRGENDEINE Form von
+            // Auto-Operation gewuenscht ist — `uploadOnSave` ODER `autoUpload`
+            // fuer Uploads, `autoDelete` fuer Loeschungen. `uploadOnSave: true`
+            // ist im Watcher-Kontext ein legitimer Trigger, weil KI-Agenten und
+            // externe Tools den VS-Code-Save-Flow umgehen und nur ueber den
+            // FileSystemWatcher erkannt werden koennen. handleFileChange macht
+            // den zusaetzlichen Per-Profil-Filter (ein "manuell-nur"-Profil
+            // wird nicht hochgeladen, auch wenn ein anderes Profil im selben
+            // Workspace Auto-Upload aktiviert hat).
+            const anyUploadViaFs = Array.from(this.profiles.values())
+                .some(p => p.watcher.enabled && (p.uploadOnSave || p.watcher.autoUpload) && p.direction !== 'remoteToLocal');
+            const anyDeleteViaFs = Array.from(this.profiles.values())
                 .some(p => p.watcher.enabled && p.watcher.autoDelete && p.direction !== 'remoteToLocal');
 
-            if (anyAutoUpload) {
+            if (anyUploadViaFs) {
                 this.watcherDisposables.push(
                     this.watcher.onDidCreate((uri) => this.handleFileChange('created', uri))
                 );
@@ -201,7 +233,7 @@ export class FileWatcher {
                 );
             }
 
-            if (anyAutoDelete) {
+            if (anyDeleteViaFs) {
                 this.watcherDisposables.push(
                     this.watcher.onDidDelete((uri) => this.handleFileChange('deleted', uri))
                 );
@@ -459,6 +491,27 @@ export class FileWatcher {
 
         const { profile, name: profileName } = resolved;
         const ignoreHandler = this.ignoreHandlers.get(profileName);
+
+        // Per-Profil-Filter: Ein Profil, das explizit nur manuelle Uploads
+        // zulaesst (uploadOnSave: false, autoUpload: false), darf nicht durch
+        // File-System-Events eines anderen Profils hochgeladen werden. Dieser
+        // Filter stellt sicher, dass die "anyUploadViaFs"-Optimierung oben
+        // nicht versehentlich in einem manuell-nur-Profil landet.
+        if ((type === 'created' || type === 'changed') &&
+            !profile.uploadOnSave && !profile.watcher.autoUpload) {
+            Logger.debug(
+                `[${profileName}] Skipping watcher ${type} for ${uri.fsPath} ` +
+                `(upload disabled on this profile)`
+            );
+            return;
+        }
+        if (type === 'deleted' && !profile.watcher.autoDelete) {
+            Logger.debug(
+                `[${profileName}] Skipping watcher ${type} for ${uri.fsPath} ` +
+                `(autoDelete disabled on this profile)`
+            );
+            return;
+        }
 
         const relativePath = getRelativePath(profile.localPath, uri.fsPath);
         const workspaceRelative = getRelativePath(this.workspacePath, uri.fsPath);
