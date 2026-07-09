@@ -10,6 +10,14 @@ vsc-extension-quickstart.md
 **/*.map
 **/*.ts
 
+# Repo-interne Hilfsmittel (nicht für End-User)
+.serena/**
+.github/**
+docs/**
+CLAUDE.md
+CONTEXT.md
+test-results/
+
 # Exclude all node_modules, then include only what we need
 node_modules/**
 

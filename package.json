@@ -243,7 +243,8 @@
     "lint": "eslint src --ext ts",
     "test:unit": "npm run compile && mocha",
     "test:integration": "vscode-test",
-    "test": "npm run test:unit"
+    "test": "npm run test:unit",
+    "package": "vsce package --no-git-tag-version --allow-missing-repository"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.6",
@@ -255,6 +256,7 @@
     "@typescript-eslint/parser": "^6.15.0",
     "@vscode/test-cli": "^0.0.4",
     "@vscode/test-electron": "^2.3.8",
+    "@vscode/vsce": "^3.9.2",
     "eslint": "^8.57.1",
     "sharp": "^0.34.5",
     "typescript": "^5.3.3"
