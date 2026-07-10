@@ -102,6 +102,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         // Auto-start watcher if configured
         await commandHandler.autoStart();
 
+        // Auto-start FileSystemWatcher fuer Profile mit aktivem Auto-Upload.
+        // Dies ist zwingend noetig, damit KI-Agent-Writes (Cursor, Cline,
+        // Continue, git apply) Uploads ausloesen — `onDidSaveTextDocument`
+        // sieht externe Schreibvorgaenge nicht.
+        await commandHandler.autoStartUploadOnSaveWatchers();
+
         // Set debug mode from first profile with debug=true
         const profiles = configManager.getAllProfiles();
         for (const profile of profiles.values()) {

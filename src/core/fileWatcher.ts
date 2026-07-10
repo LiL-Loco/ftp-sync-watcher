@@ -183,29 +183,26 @@ export class FileWatcher {
             }
 
             const pattern = new vscode.RelativePattern(this.workspacePath, watchPattern);
-            // awaitWriteFinish verhindert, dass mehrfache schnelle Schreibvorgänge
-            // (z.B. write-temp + rename durch KI-Agenten wie Cursor / Cline / Continue)
-            // mehrfach getriggert werden. `stability` wartet 500ms nach dem letzten
-            // Schreibvorgang, bevor der Change-Event ausgeloest wird — das ist lang
-            // genug, um atomare Saves zu erkennen, und kurz genug, um nicht spuerbar
-            // zu sein.
+            // ACHTUNG — `awaitWriteFinish` ist BEWUSST deaktiviert.
             //
-            // Hintergrund: Externe Tools (KI-Agenten, CLI-Tools wie rsync, Git-
-            // Operationen) umgehen den VS-Code-Editor-Save-Flow und schreiben
-            // direkt auf die Disk. Der native FileSystemWatcher kann bei schnellen
-            // Folgen von write → truncate → write den abschliessenden Zustand
-            // verpassen, sodass die finale Datei nie hochgeladen wird.
+            // Hintergrund: VS-Code `awaitWriteFinish: { stability: 500 }`
+            // wartet 500ms nach dem LETZTEN Schreibvorgang, bevor der
+            // Change-Event ausgeloest wird. Bei kurzen Editor-Saves
+            // (Atomar: write → close) funktioniert das. Bei KI-Agenten wie
+            // Cursor / Cline / Continue versagt es: diese Tools schreiben
+            // ueber mehrere Sekunden hinweg kontinuierlich (z.B. komplexes
+            // TypeScript-Refactoring, das 1-3 Sekunden dauert und etliche
+            // write-chunks produziert). Der awaitWriteFinish-Timer wird bei
+            // jedem chunk zurueckgesetzt, loest am Ende nie aus, und der
+            // finale Zustand der Datei wird nie an unseren Event-Handler
+            // gemeldet. Die Datei wird NICHT hochgeladen.
             //
-            // Der `as never`-Cast umgeht eine Typen-Luecke: @types/vscode@^1.85
-            // kennt die Options-Form noch nicht (die API wurde erst spaeter
-            // formalisiert). VS Code 1.93+ unterstuetzt die Option zur Laufzeit;
-            // aelteren Versionen ignoriert das Argument einfach, was hier
-            // akzeptabel ist — der Workaround-Debounce in handleFileChange faengt
-            // Mehrfach-Trigger ab, auch ohne awaitWriteFinish.
-            this.watcher = vscode.workspace.createFileSystemWatcher(
-                pattern,
-                { awaitWriteFinish: { stability: 500 } } as never
-            );
+            // Wir verlassen uns stattdessen auf unseren eigenen Debounce
+            // (debounceMs = 500) in handleFileChange. Der native Watcher
+            // feuert bei JEDEM onDidChange und unser User-Code collapst
+            // mehrere Events zu einem einzigen Upload. Das verhaelt sich
+            // robust gegenueber beliebig langen KI-Write-Sequenzen.
+            this.watcher = vscode.workspace.createFileSystemWatcher(pattern);
 
             // Events werden auf alle aktiven Profile verteilt: jeder Trigger
             // wird per localPath-Match dem zustaendigen Profil zugeordnet.

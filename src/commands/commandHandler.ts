@@ -345,6 +345,106 @@ export class CommandHandler {
     }
 
     /**
+     * Auto-Start des FileSystemWatchers fuer Profile mit aktivem Auto-Upload.
+     *
+     * Hintergrund: KI-Agent-Tools wie Cursor, Cline, Continue oder `git apply`
+     * schreiben direkt auf die Platte, ohne den VS-Code-Save-Flow zu nutzen.
+     * Der Listener `vscode.workspace.onDidSaveTextDocument` sieht diese Writes
+     * NICHT — er feuert nur bei expliziten Editor-Saves (`Ctrl+S`).
+     *
+     * Damit solche externen Schreibvorgaenge trotzdem hochgeladen werden, muss
+     * der FileSystemWatcher laufen, sobald ein Profil `uploadOnSave: true` oder
+     * `watcher.autoUpload: true` aktiviert hat. Ohne diesen Auto-Start waere
+     * der User gezwungen, nach jedem Workspace-Open `ftpSync.startWatcher`
+     * manuell aufzurufen — das ist fuer KI-Workflows unbrauchbar.
+     *
+     * Verhalten:
+     * - Pro Workspace-Folder wird der Watcher gestartet, wenn mindestens ein
+     *   Profil `uploadOnSave: true` oder `watcher.enabled && watcher.autoUpload`
+     *   hat.
+     * - Bereits laufende Watcher werden nicht erneut initialisiert (Idempotenz).
+     * - `ftpSync.autoStartWatcher: true` ist weiterhin noetig fuer Profile, die
+     *   NUR `remoteToLocal`-Polling brauchen (ohne FileSystemWatcher-Reichweite).
+     * - Fehler beim Auto-Start werden als Warnung geloggt, nicht als harter
+     *   Dialog — der User hat den Start nicht explizit angefordert.
+     */
+    public async autoStartUploadOnSaveWatchers(): Promise<void> {
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (!workspaceFolders) {
+            return;
+        }
+
+        for (const folder of workspaceFolders) {
+            const profiles = this.configManager.getProfiles(folder.uri.fsPath);
+            if (profiles.size === 0) {
+                continue;
+            }
+
+            if (this.watchers.has(folder.uri.fsPath)) {
+                continue;
+            }
+
+            const profilesNeedingWatcher = Array.from(profiles.values())
+                .filter(p => this.profileNeedsAutoUpload(p));
+            if (profilesNeedingWatcher.length === 0) {
+                continue;
+            }
+
+            try {
+                const watcher = new FileWatcher(folder.uri.fsPath, profiles, {
+                    tombstoneStoreFactory: (profileName) =>
+                        this.tombstoneStoreFactory
+                            ? this.tombstoneStoreFactory(folder.uri.fsPath, profileName)
+                            : undefined
+                });
+
+                watcher.onChange((event) => {
+                    this.statusBar.showSyncing();
+                    Logger.info(`[${event.profileName}] ${event.type}: ${event.relativePath}`);
+                    setTimeout(() => this.statusBar.endSyncing(), 500);
+                });
+
+                await watcher.start();
+                this.watchers.set(folder.uri.fsPath, watcher);
+
+                Logger.success(
+                    `Watcher auto-started for ${folder.name} ` +
+                    `(${profilesNeedingWatcher.length} profile(s) with uploadOnSave/autoUpload)`
+                );
+            } catch (error) {
+                Logger.warn(
+                    `Failed to auto-start watcher for ${folder.name}: ` +
+                    `${(error as Error).message}`
+                );
+            }
+        }
+
+        if (this.watchers.size > 0) {
+            this.statusBar.setState('watching');
+            this.statusBar.setProfileCount(this.configManager.getProfileCount());
+        }
+    }
+
+    /**
+     * Prueft, ob ein Profil den FileSystemWatcher-Auto-Start braucht.
+     *
+     * Trigger:
+     * - `uploadOnSave: true` — der globale Document-Save-Listener ist aktiv;
+     *   der Watcher dient als Backup fuer KI-Direct-Writes.
+     * - `watcher.enabled && watcher.autoUpload` — der User hat explizit den
+     *   Auto-Upload-Modus gewaehlt (ohne `uploadOnSave` zu setzen).
+     */
+    private profileNeedsAutoUpload(profile: FtpSyncProfile): boolean {
+        if (profile.uploadOnSave) {
+            return true;
+        }
+        if (profile.watcher?.enabled && profile.watcher?.autoUpload) {
+            return true;
+        }
+        return false;
+    }
+
+    /**
      * Upload-on-Save: wird vom globalen Document-Save-Listener aufgerufen.
      * Loest das Profil per URI auf; bei mehreren Profilen im selben
      * Workspace gewinnt das spezifischste (laengster localPath).
