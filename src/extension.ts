@@ -106,7 +106,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         // Dies ist zwingend noetig, damit KI-Agent-Writes (Cursor, Cline,
         // Continue, git apply) Uploads ausloesen — `onDidSaveTextDocument`
         // sieht externe Schreibvorgaenge nicht.
-        await commandHandler.autoStartUploadOnSaveWatchers();
+        // Bewusst in try/catch gewrapped: ein Fehler hier darf NIE die
+        // bereits registrierten Commands blockieren.
+        try {
+            await commandHandler.autoStartUploadOnSaveWatchers();
+        } catch (error) {
+            Logger.warn(
+                `Auto-start of upload-on-save watchers failed: ${(error as Error).message}`
+            );
+        }
 
         // Set debug mode from first profile with debug=true
         const profiles = configManager.getAllProfiles();

@@ -42,6 +42,7 @@ export class CommandHandler {
         ];
 
         commands.forEach(cmd => context.subscriptions.push(cmd));
+        Logger.info(`CommandHandler: ${commands.length} commands registered`);
     }
 
     public async dispose(): Promise<void> {
