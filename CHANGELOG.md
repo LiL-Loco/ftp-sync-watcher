@@ -5,6 +5,13 @@ Alle wichtigen Änderungen an diesem Projekt werden in dieser Datei dokumentiert
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt verwendet [Semantic Versioning](https://semver.org/lang/de/).
 
+## [2.0.1] - 2026-07-15
+
+### 🔧 Behoben
+
+- **FileSystemWatcher Auto-Start fuer `uploadOnSave`-Profile**: `commandHandler.autoStartUploadOnSaveWatchers()` in `src/commands/commandHandler.ts` wird jetzt in `extension.ts activate()` direkt nach `autoStart()` aufgerufen und startet den FileSystemWatcher automatisch fuer jedes Profil mit `uploadOnSave: true || (watcher.enabled && watcher.autoUpload)`. Vorher musste der User nach jedem Workspace-Open `ftpSync.startWatcher` manuell aufrufen, weil `FileWatcher.start()` zwar korrekt registrierte, aber nur ueber den manuellen Pfad erreichbar war. Folge: KI-Agent-Writes (Cursor, Cline, Continue, `git apply`) wurden nicht hochgeladen, weil `onDidSaveTextDocument` externe Schreibvorgaenge nicht sieht. Idempotent — mehrfache Aufrufe und nachtraegliches `ftpSync.startWatcher` blockieren sich nicht. `awaitWriteFinish: { stability: 500 }` wurde explizit DEAKTIVIERT: bei langlaufenden KI-Refactorings (1-3 s kontinuierliches Schreiben) wuerde der VS-Code-Timer staendig zurueckgesetzt und nie feuern — der eigene Debounce (`debounceMs = 500`) in `handleFileChange` collapse-t die nativ feuernden Events korrekt.
+- **Defensive Activation-Blockaden**: `commandHandler.autoStartUploadOnSaveWatchers()` ist in `extension.ts activate()` in einen `try/catch` gewrapped — ein Fehler beim Auto-Start kann NIE die bereits registrierten Commands blockieren. Commands wie `ftpSync.createConfig` und `ftpSync.connect` werden in `registerCommands()` ZUERST registriert, BEVOR irgendwelche Auto-Start-Logik laeuft. `Logger.info(...)` nach `registerCommands()` loggt explizit die Anzahl der registrierten Commands fuer eine schnelle Diagnose bei zukuenftigen Cache-Problemen.
+
 ## [2.0.0] - 2026-07-02
 
 ### ⚠️ Breaking Changes
