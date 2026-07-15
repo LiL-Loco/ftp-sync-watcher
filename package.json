@@ -238,7 +238,8 @@
     "test:integration": "vscode-test",
     "test": "npm run test:unit",
     "bundle": "node esbuild.config.mjs",
-    "package": "vsce package --no-git-tag-version --allow-missing-repository"
+    "package": "npm run verify:bundle && vsce package --no-git-tag-version --allow-missing-repository",
+    "verify:bundle": "node -e \"const fs=require('fs');const s=fs.statSync('out/extension.js');if(s.size<50000){console.error('[verify:bundle] out/extension.js is only '+s.size+' bytes — esbuild bundle is missing or stale. Run: npm run bundle');process.exit(1)}console.log('[verify:bundle] out/extension.js is '+s.size+' bytes — esbuild bundle present.')\""
   },
   "devDependencies": {
     "@types/mocha": "^10.0.6",
