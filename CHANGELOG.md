@@ -5,6 +5,14 @@ Alle wichtigen Änderungen an diesem Projekt werden in dieser Datei dokumentiert
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt verwendet [Semantic Versioning](https://semver.org/lang/de/).
 
+## [2.0.2] - 2026-07-15
+
+### 🔧 Behoben
+
+- **`ftpSync.createConfig` Button dedupliziert**: Der FTP-Explorer zeigt jetzt bei fehlenden Profilen nur noch **einen** Button "No configuration found — Click to create" (das `NoConfigItem` TreeItem mit `command: 'ftpSync.createConfig'`). Vorher waren zwei Render-Pfade parallel aktiv: `package.json` `viewsWelcome` mit Markdown-Link UND die ungenutzte `NoConfigItem`-Klasse. `viewsWelcome` wurde komplett entfernt, dafuer gibt `FtpExplorerProvider.getChildren()` jetzt `[new NoConfigItem()]` zurueck wenn `!configManager.hasProfiles()`. Die `NoConfigItem.contextValue = 'noConfig'` sorgt dafuer, dass `ftpSync.downloadRemoteFile` / `deleteRemoteFile` nicht versehentlich auf dem Item geriggert werden (`when: viewItem =~ /ftpFile|ftpFolder/`).
+- **`commandHandler.createConfig` hat eine letzte Verteidigungslinie**: Der Aufruf `await this.configManager.createConfig(folderPath)` ist jetzt in einen `try/catch` gewrapped. Selbst wenn `configManager.createConfig` synchron wirft (z.B. ein Bug in der Pfad-Aufloesung vor dem ersten internen try/catch), sieht der User jetzt eine sichtbare Fehlermeldung statt Silent-Fail. `Logger.info`/`Logger.success` markieren Anfang, Delegation und Ende des Pfads im Output-Channel fuer eine schnellere Diagnose.
+- **Saubere Single-Installation**: Die v2.0.1-VSIX hatte bei einigen Usern eine parallel laufende aeltere 1.x-Installation, die ebenfalls Welcome-Views registrierte. v2.0.2 installiert sauber ohne Co-Existenz.
+
 ## [2.0.1] - 2026-07-15
 
 ### 🔧 Behoben

@@ -261,7 +261,11 @@ export class FtpExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
         // Root level
         if (!element) {
             if (!this.configManager.hasProfiles()) {
-                return [];
+                // Statt leerer View (→ viewsWelcome-Link): ein dediziertes
+                // NoConfigItem mit command. Eindeutiger Render-Pfad, kein
+                // doppelter Button, konsistent mit ConnectionStatusItem /
+                // CurrentPathItem.
+                return [new NoConfigItem()];
             }
 
             if (this.connectionStatus !== 'connected') {

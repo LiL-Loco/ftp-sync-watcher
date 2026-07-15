@@ -310,7 +310,8 @@ export class CommandHandler {
         Logger.info('createConfig command triggered');
 
         const workspaceFolders = vscode.workspace.workspaceFolders;
-        if (!workspaceFolders) {
+        if (!workspaceFolders || workspaceFolders.length === 0) {
+            Logger.warn('createConfig: no workspace folder open');
             showWarningMessage('No workspace folder open');
             return;
         }
@@ -330,12 +331,26 @@ export class CommandHandler {
             );
 
             if (!selected) {
+                Logger.info('createConfig: user cancelled workspace pick');
                 return;
             }
             folderPath = selected.folder.uri.fsPath;
         }
 
-        await this.configManager.createConfig(folderPath);
+        Logger.info(`createConfig: delegating to configManager.createConfig(${folderPath})`);
+
+        try {
+            await this.configManager.createConfig(folderPath);
+            Logger.success(`createConfig: finished for ${folderPath}`);
+        } catch (error) {
+            // Letzte Verteidigungslinie: configManager.createConfig hat bereits
+            // eigene try/catch-Bloecke, aber ein Fehler VOR dem ersten Block
+            // (z.B. path.join wirft) oder ein Programmierfehler waeren sonst
+            // unhandled. Wir zeigen eine sichtbare Meldung statt Silent-Fail.
+            const msg = (error as Error)?.message ?? String(error);
+            Logger.error(`createConfig: unhandled error in configManager.createConfig: ${msg}`, error as Error);
+            showErrorMessage(`FTP Sync: Failed to create configuration — ${msg}`);
+        }
     }
 
     public async autoStart(): Promise<void> {
