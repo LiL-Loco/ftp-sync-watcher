@@ -443,8 +443,18 @@ export class ConfigManager {
         const vscodeDir = path.join(folderPath, CONFIG_DIR);
         const configPath = this.getConfigPath(folderPath);
 
-        if (!fs.existsSync(vscodeDir)) {
-            fs.mkdirSync(vscodeDir, { recursive: true });
+        Logger.info(`createConfig: target = ${configPath}`);
+
+        try {
+            if (!fs.existsSync(vscodeDir)) {
+                fs.mkdirSync(vscodeDir, { recursive: true });
+                Logger.info(`createConfig: created directory ${vscodeDir}`);
+            }
+        } catch (error) {
+            const msg = `Failed to create ${vscodeDir}: ${(error as Error).message}`;
+            Logger.error(msg, error as Error);
+            showErrorMessage(`FTP Sync: ${msg}`);
+            return;
         }
 
         if (fs.existsSync(configPath)) {
@@ -584,14 +594,43 @@ export class ConfigManager {
     ]
 }`;
 
-        fs.writeFileSync(configPath, defaultConfig, 'utf-8');
+        try {
+            fs.writeFileSync(configPath, defaultConfig, 'utf-8');
+            Logger.info(`createConfig: wrote ${defaultConfig.length} bytes to ${configPath}`);
+        } catch (error) {
+            const msg = `Failed to write ${configPath}: ${(error as Error).message}`;
+            Logger.error(msg, error as Error);
+            showErrorMessage(`FTP Sync: ${msg}`);
+            return;
+        }
 
-        await this.loadConfigForFolder(folderPath);
+        try {
+            await this.loadConfigForFolder(folderPath);
+        } catch (error) {
+            // Datei steht bereits auf der Platte. Wir loggen + zeigen einen
+            // Hinweis, brechen aber NICHT ab — der User soll die Datei sehen.
+            Logger.warn(`createConfig: reload failed (${(error as Error).message}), but file is on disk`);
+        }
 
-        vscode.commands.executeCommand('setContext', 'ftpSync.hasConfig', true);
+        try {
+            vscode.commands.executeCommand('setContext', 'ftpSync.hasConfig', true);
+        } catch (error) {
+            Logger.warn(`createConfig: setContext failed (${(error as Error).message})`);
+        }
 
-        const doc = await vscode.workspace.openTextDocument(configPath);
-        await vscode.window.showTextDocument(doc);
+        try {
+            const doc = await vscode.workspace.openTextDocument(configPath);
+            await vscode.window.showTextDocument(doc);
+        } catch (error) {
+            // Datei existiert, Editor-Oeffnen ist optional — Hinweis reicht.
+            Logger.warn(`createConfig: openTextDocument failed (${(error as Error).message})`);
+            showInfoMessage(
+                `FTP Sync: Configuration file written to ${configPath}. ` +
+                `Open it manually if the editor didn't show it.`,
+                5000
+            );
+            return;
+        }
 
         Logger.info(`Created config file at ${configPath}`);
         showSuccessMessage('FTP Sync: Configuration file created. Please edit with your server details.', 5000);
