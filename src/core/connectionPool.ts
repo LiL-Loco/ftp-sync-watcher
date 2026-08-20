@@ -288,22 +288,36 @@ export class ConnectionPool {
             return this.client;
         } catch (error) {
             const errorMessage = (error as Error).message;
-            
-            // Check for 530 max connections error
+
+            // Klassifiziere den Fehler fuer Health-Tracking und Retry-Strategie.
             if (errorMessage.includes('530') && errorMessage.toLowerCase().includes('maximum')) {
                 this.health = 'rate-limited';
                 globalConnectionManager.setRateLimited();
-                // Release slot since we couldn't connect
-                if (this.hasSlot) {
-                    globalConnectionManager.releaseSlot();
-                    this.hasSlot = false;
-                }
             } else {
                 this.health = 'failed';
             }
-            
+
+            // Slot IMMER freigeben, sobald connect() fehlschlaegt — unabhaengig
+            // davon, ob es ein 530-Rate-Limit oder ein anderer Fehler war.
+            //
+            // Hintergrund: Vorher war der releaseSlot()-Aufruf NUR im 530-Zweig.
+            // Bei jedem anderen Fehler (z.B. ECONNREFUSED, ETIMEDOUT, falsche
+            // Credentials, TLS-Handshake-Fehler) blieb `hasSlot = true`, der
+            // Global-Slot war permanent geleakt, und nach 2 Fehlversuchen
+            // blockierte sich der ConnectionPool selbst, weil
+            // `acquireSlot()` immer wieder wartete (maxGlobalConnections=2).
+            //
+            // Folge: Auch nach Beseitigung des Netzwerk-/Config-Problems
+            // konnten keine neuen Slots mehr reserviert werden, Uploads
+            // hingen in der Slot-Warteschlange, und der User sah "watcher
+            // laeuft, aber Uploads passieren nicht".
+            if (this.hasSlot) {
+                globalConnectionManager.releaseSlot();
+                this.hasSlot = false;
+            }
+
             this.client = null;
-            
+
             Logger.error(`Connection failed: ${errorMessage}`);
             throw error;
         } finally {

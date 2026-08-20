@@ -5,6 +5,14 @@ Alle wichtigen Änderungen an diesem Projekt werden in dieser Datei dokumentiert
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt verwendet [Semantic Versioning](https://semver.org/lang/de/).
 
+## [2.0.3] - 2026-08-20
+
+### � Behoben
+
+- **Watcher feuert, aber Uploads passieren nicht — Global-Slot-Leak in `ConnectionPool.connect()`**: Der `globalConnectionManager`-Slot wurde beim ersten Connect-Fehler NUR im 530-Rate-Limit-Zweig freigegeben. Bei jedem anderen Fehler (ECONNREFUSED, ETIMEDOUT, falsche Credentials, TLS-Handshake-Fehler) blieb `hasSlot = true`, der Global-Slot war permanent geleakt, und nach spätestens 2 Fehlversuchen (`maxGlobalConnections = 2`) blockierte sich der ConnectionPool selbst — `acquireSlot()` wartete 120 s in der Queue, Uploads hingen, und der User sah das irrefuehrende Bild "Watcher laeuft, aber Transfer findet nicht statt". Fix in `src/core/connectionPool.ts`: `releaseSlot()` wird jetzt IMMER aufgerufen, sobald `connect()` fehlschlaegt — unabhaengig vom Fehlertyp. Klassifizierung (530 vs. anderer Fehler) bleibt unveraendert und beeinflusst nur `health` und Rate-Limit-Timestamp.
+- **`FileWatcher.start()` race-safe**: Vor v2.0.3 konnte `start()` zwei Mal kurz nacheinander aufgerufen werden (z.B. `autoStartUploadOnSaveWatchers` plus ein spontaner `getOrCreateWatcher` durch einen fruehen Save-Event), bevor `isRunning = true` gesetzt war — Folge waren doppelte FileSystemWatcher-Registrierungen, doppelte Event-Handler und doppelte Polling-Loops. Fix in `src/core/fileWatcher.ts`: `startPromise`-Cache teilt parallele Aufrufer dasselbe Promise; `stop()` loescht den Cache, damit ein spaeteres `start()` wieder frisch initialisiert.
+- **`getOrCreateWatcher` startet den FileWatcher jetzt selbst**: Vor v2.0.3 wurde der `FileWatcher` zwar in `this.watchers` eingetragen, aber `watcher.start()` wurde NICHT aufgerufen. Wenn `handleDocumentSave` (Ctrl+S) vor `autoStartUploadOnSaveWatchers` lief — z.B. weil der User direkt nach Workspace-Open speicherte — blieb der FileSystemWatcher unregistriert. `autoStartUploadOnSaveWatchers` uebersprang den Eintrag per `this.watchers.has(...)`-Check, KI-Agent-Writes (Cursor/Cline/git apply) wurden stillschweigend nicht hochgeladen, manueller Ctrl+S-Upload blieb funktional. Fix in `src/commands/commandHandler.ts`: `getOrCreateWatcher` ruft jetzt `await watcher.start()` auf, BEVOR der Watcher in `this.watchers` landet. Bei Fehlschlag bleibt der unstarted Watcher draussen, damit `autoStartUploadOnSaveWatchers` beim Retry den Start selbst uebernehmen kann. Race-Safety ist durch den `startPromise`-Cache in `FileWatcher` garantiert.
+
 ## [2.0.2] - 2026-07-15
 
 ### 🔧 Behoben

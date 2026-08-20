@@ -71,6 +71,15 @@ export class FileWatcher {
     private pollingTimers: Map<string, NodeJS.Timeout> = new Map();
     private remoteStateCache: Map<string, Map<string, { size: number; modifiedTime: number }>> = new Map();
     private isRunning = false;
+    /**
+     * Promise-Cache fuer `start()`. Wenn zwei Aufrufer gleichzeitig (z.B.
+     * `autoStartUploadOnSaveWatchers` + `getOrCreateWatcher` waehrend eines
+     * fruehen Save-Events) `start()` aufrufen, teilen sie sich dasselbe
+     * Promise. Ohne diesen Cache wuerden beide Calls in den Body laufen,
+     * bevor `isRunning` gesetzt wird — mit Folge: zwei FileSystemWatcher,
+     * doppelte Event-Handler und doppelte Polling-Loops pro Profil.
+     */
+    private startPromise: Promise<void> | undefined;
     private debounceTimers: Map<string, NodeJS.Timeout> = new Map();
     private pendingOperations: Set<string> = new Set();
     private activeUploads: Set<string> = new Set();
@@ -116,6 +125,13 @@ export class FileWatcher {
     /**
      * Startet den File-Watcher fuer alle aktiven Profile. Profile mit
      * watcher.enabled === false werden uebersprungen.
+     *
+     * Idempotent und race-safe: mehrfache parallele Aufrufer teilen sich
+     * dasselbe `startPromise`. Damit ist es sicher, `start()` aus mehreren
+     * Pfaden aufzurufen (z.B. `autoStartUploadOnSaveWatchers` plus ein
+     * spontaner `getOrCreateWatcher` durch einen fruehen Save-Event), ohne
+     * doppelte FileSystemWatcher-Registrierungen oder Polling-Loops zu
+     * erzeugen.
      */
     public async start(): Promise<void> {
         if (this.isRunning) {
@@ -123,132 +139,145 @@ export class FileWatcher {
             return;
         }
 
+        if (this.startPromise) {
+            return this.startPromise;
+        }
+
+        this.startPromise = this.doStart();
         try {
-            // Ignore-Handler initialisieren und Verbindung fuer jedes aktive
-            // Profil testen. Fehler in einem Profil blockieren den Start
-            // anderer Profile nicht — sie werden spaeter beim Trigger erneut
-            // versucht (ConnectionPool-Reconnect).
-            for (const [name, profile] of this.profiles.entries()) {
-                if (!profile.watcher.enabled) {
-                    Logger.info(`Watcher disabled for profile "${name}"`);
-                    continue;
-                }
-
-                if (profile.direction === 'bidirectional') {
-                    Logger.warn(
-                        `Profile "${name}" uses direction "bidirectional" — ` +
-                        `not yet implemented, fallback to localToRemote semantics.`
-                    );
-                }
-
-                const ignoreHandler = this.ignoreHandlers.get(name);
-                if (ignoreHandler) {
-                    await ignoreHandler.initialize();
-                }
-
-                const pool = this.connectionPools.get(name);
-                if (pool) {
-                    try {
-                        Logger.info(`Testing connection for profile "${name}"...`);
-                        await pool.getConnection();
-                    } catch (error) {
-                        Logger.warn(
-                            `Profile "${name}" initial connection failed (will retry on demand): ${(error as Error).message}`
-                        );
-                    }
-                }
-
-                // Tombstone-Store aufraeumen (veraltete Eintraege).
-                const tsStore = this.tombstoneStores.get(name);
-                if (tsStore) {
-                    await tsStore.prune();
-                }
-
-                // Polling-Loop fuer remoteToLocal-Profile starten.
-                if (profile.direction === 'remoteToLocal' && profile.watcher.enabled) {
-                    this.startPollingLoop(name, profile);
-                }
-            }
-
-            // Watch-Pattern: aus dem ersten aktiven Profil ableiten. Mehrere
-            // Patterns koennen wir nicht kombinieren — daher gilt der Pattern
-            // des ersten aktiven Profils fuer den ganzen Watcher. In der Regel
-            // teilen sich Profile innerhalb eines Workspace dieselbe Quelle.
-            let watchPattern = '**/*';
-            for (const profile of this.profiles.values()) {
-                if (profile.watcher.enabled && typeof profile.watcher.files === 'string') {
-                    watchPattern = profile.watcher.files;
-                    break;
-                }
-            }
-
-            const pattern = new vscode.RelativePattern(this.workspacePath, watchPattern);
-            // ACHTUNG — `awaitWriteFinish` ist BEWUSST deaktiviert.
-            //
-            // Hintergrund: VS-Code `awaitWriteFinish: { stability: 500 }`
-            // wartet 500ms nach dem LETZTEN Schreibvorgang, bevor der
-            // Change-Event ausgeloest wird. Bei kurzen Editor-Saves
-            // (Atomar: write → close) funktioniert das. Bei KI-Agenten wie
-            // Cursor / Cline / Continue versagt es: diese Tools schreiben
-            // ueber mehrere Sekunden hinweg kontinuierlich (z.B. komplexes
-            // TypeScript-Refactoring, das 1-3 Sekunden dauert und etliche
-            // write-chunks produziert). Der awaitWriteFinish-Timer wird bei
-            // jedem chunk zurueckgesetzt, loest am Ende nie aus, und der
-            // finale Zustand der Datei wird nie an unseren Event-Handler
-            // gemeldet. Die Datei wird NICHT hochgeladen.
-            //
-            // Wir verlassen uns stattdessen auf unseren eigenen Debounce
-            // (debounceMs = 500) in handleFileChange. Der native Watcher
-            // feuert bei JEDEM onDidChange und unser User-Code collapst
-            // mehrere Events zu einem einzigen Upload. Das verhaelt sich
-            // robust gegenueber beliebig langen KI-Write-Sequenzen.
-            this.watcher = vscode.workspace.createFileSystemWatcher(pattern);
-
-            // Events werden auf alle aktiven Profile verteilt: jeder Trigger
-            // wird per localPath-Match dem zustaendigen Profil zugeordnet.
-            //
-            // Wichtig: Wir registrieren die Events sobald IRGENDEINE Form von
-            // Auto-Operation gewuenscht ist — `uploadOnSave` ODER `autoUpload`
-            // fuer Uploads, `autoDelete` fuer Loeschungen. `uploadOnSave: true`
-            // ist im Watcher-Kontext ein legitimer Trigger, weil KI-Agenten und
-            // externe Tools den VS-Code-Save-Flow umgehen und nur ueber den
-            // FileSystemWatcher erkannt werden koennen. handleFileChange macht
-            // den zusaetzlichen Per-Profil-Filter (ein "manuell-nur"-Profil
-            // wird nicht hochgeladen, auch wenn ein anderes Profil im selben
-            // Workspace Auto-Upload aktiviert hat).
-            const anyUploadViaFs = Array.from(this.profiles.values())
-                .some(p => p.watcher.enabled && (p.uploadOnSave || p.watcher.autoUpload) && p.direction !== 'remoteToLocal');
-            const anyDeleteViaFs = Array.from(this.profiles.values())
-                .some(p => p.watcher.enabled && p.watcher.autoDelete && p.direction !== 'remoteToLocal');
-
-            if (anyUploadViaFs) {
-                this.watcherDisposables.push(
-                    this.watcher.onDidCreate((uri) => this.handleFileChange('created', uri))
-                );
-                this.watcherDisposables.push(
-                    this.watcher.onDidChange((uri) => this.handleFileChange('changed', uri))
-                );
-            }
-
-            if (anyDeleteViaFs) {
-                this.watcherDisposables.push(
-                    this.watcher.onDidDelete((uri) => this.handleFileChange('deleted', uri))
-                );
-            }
-
-            this.isRunning = true;
-            Logger.success(`File watcher started for ${this.workspacePath} (${this.connectionPools.size} pool(s))`);
-            Logger.info(`Watching pattern: ${watchPattern}`);
-        } catch (error) {
-            this.stats.isConnected = false;
-            Logger.error(`Failed to start file watcher: ${(error as Error).message}`, error as Error);
-            throw error;
+            await this.startPromise;
+        } finally {
+            // Promise-Cache nach Abschluss freigeben, damit spaeter ein
+            // erneuter Start (z.B. nach `stop()`) moeglich ist.
+            this.startPromise = undefined;
         }
     }
 
     /**
-     * Startet einen Polling-Loop fuer ein remoteToLocal-Profil. Pro Tick
-     * wird das Remote-Verzeichnis gelistet, mit dem letzten Stand
+     * Tatsaechliche Start-Logik. Ausgelagert in eine eigene Methode, damit
+     * der Promise-Cache in `start()` sauber funktioniert.
+     */
+    private async doStart(): Promise<void> {
+        // Ignore-Handler initialisieren und Verbindung fuer jedes aktive
+        // Profil testen. Fehler in einem Profil blockieren den Start
+        // anderer Profile nicht — sie werden spaeter beim Trigger erneut
+        // versucht (ConnectionPool-Reconnect).
+        for (const [name, profile] of this.profiles.entries()) {
+            if (!profile.watcher.enabled) {
+                Logger.info(`Watcher disabled for profile "${name}"`);
+                continue;
+            }
+    
+            if (profile.direction === 'bidirectional') {
+                Logger.warn(
+                    `Profile "${name}" uses direction "bidirectional" — ` +
+                    `not yet implemented, fallback to localToRemote semantics.`
+                );
+            }
+    
+            const ignoreHandler = this.ignoreHandlers.get(name);
+            if (ignoreHandler) {
+                await ignoreHandler.initialize();
+            }
+    
+            const pool = this.connectionPools.get(name);
+            if (pool) {
+                try {
+                    Logger.info(`Testing connection for profile "${name}"...`);
+                    await pool.getConnection();
+                } catch (error) {
+                    Logger.warn(
+                        `Profile "${name}" initial connection failed (will retry on demand): ${(error as Error).message}`
+                    );
+                }
+            }
+    
+            // Tombstone-Store aufraeumen (veraltete Eintraege).
+            const tsStore = this.tombstoneStores.get(name);
+            if (tsStore) {
+                await tsStore.prune();
+            }
+    
+            // Polling-Loop fuer remoteToLocal-Profile starten.
+            if (profile.direction === 'remoteToLocal' && profile.watcher.enabled) {
+                this.startPollingLoop(name, profile);
+            }
+        }
+    
+        // Watch-Pattern: aus dem ersten aktiven Profil ableiten. Mehrere
+        // Patterns koennen wir nicht kombinieren — daher gilt der Pattern
+        // des ersten aktiven Profils fuer den ganzen Watcher. In der Regel
+        // teilen sich Profile innerhalb eines Workspace dieselbe Quelle.
+        let watchPattern = '**/*';
+        for (const profile of this.profiles.values()) {
+            if (profile.watcher.enabled && typeof profile.watcher.files === 'string') {
+                watchPattern = profile.watcher.files;
+                break;
+            }
+        }
+    
+        const pattern = new vscode.RelativePattern(this.workspacePath, watchPattern);
+        // ACHTUNG — `awaitWriteFinish` ist BEWUSST deaktiviert.
+        //
+        // Hintergrund: VS-Code `awaitWriteFinish: { stability: 500 }`
+        // wartet 500ms nach dem LETZTEN Schreibvorgang, bevor der
+        // Change-Event ausgeloest wird. Bei kurzen Editor-Saves
+        // (Atomar: write → close) funktioniert das. Bei KI-Agenten wie
+        // Cursor / Cline / Continue versagt es: diese Tools schreiben
+        // ueber mehrere Sekunden hinweg kontinuierlich (z.B. komplexes
+        // TypeScript-Refactoring, das 1-3 Sekunden dauert und etliche
+        // write-chunks produziert). Der awaitWriteFinish-Timer wird bei
+        // jedem chunk zurueckgesetzt, loest am Ende nie aus, und der
+        // finale Zustand der Datei wird nie an unseren Event-Handler
+        // gemeldet. Die Datei wird NICHT hochgeladen.
+        //
+        // Wir verlassen uns stattdessen auf unseren eigenen Debounce
+        // (debounceMs = 500) in handleFileChange. Der native Watcher
+        // feuert bei JEDEM onDidChange und unser User-Code collapst
+        // mehrere Events zu einem einzigen Upload. Das verhaelt sich
+        // robust gegenueber beliebig langen KI-Write-Sequenzen.
+        this.watcher = vscode.workspace.createFileSystemWatcher(pattern);
+    
+        // Events werden auf alle aktiven Profile verteilt: jeder Trigger
+        // wird per localPath-Match dem zustaendigen Profil zugeordnet.
+        //
+        // Wichtig: Wir registrieren die Events sobald IRGENDEINE Form von
+        // Auto-Operation gewuenscht ist — `uploadOnSave` ODER `autoUpload`
+        // fuer Uploads, `autoDelete` fuer Loeschungen. `uploadOnSave: true`
+        // ist im Watcher-Kontext ein legitimer Trigger, weil KI-Agenten und
+        // externe Tools den VS-Code-Save-Flow umgehen und nur ueber den
+        // FileSystemWatcher erkannt werden koennen. handleFileChange macht
+        // den zusaetzlichen Per-Profil-Filter (ein "manuell-nur"-Profil
+        // wird nicht hochgeladen, auch wenn ein anderes Profil im selben
+        // Workspace Auto-Upload aktiviert hat).
+        const anyUploadViaFs = Array.from(this.profiles.values())
+            .some(p => p.watcher.enabled && (p.uploadOnSave || p.watcher.autoUpload) && p.direction !== 'remoteToLocal');
+        const anyDeleteViaFs = Array.from(this.profiles.values())
+            .some(p => p.watcher.enabled && p.watcher.autoDelete && p.direction !== 'remoteToLocal');
+    
+        if (anyUploadViaFs) {
+            this.watcherDisposables.push(
+                this.watcher.onDidCreate((uri) => this.handleFileChange('created', uri))
+            );
+            this.watcherDisposables.push(
+                this.watcher.onDidChange((uri) => this.handleFileChange('changed', uri))
+            );
+        }
+    
+        if (anyDeleteViaFs) {
+            this.watcherDisposables.push(
+                this.watcher.onDidDelete((uri) => this.handleFileChange('deleted', uri))
+            );
+        }
+    
+            this.isRunning = true;
+            Logger.success(`File watcher started for ${this.workspacePath} (${this.connectionPools.size} pool(s))`);
+            Logger.info(`Watching pattern: ${watchPattern}`);
+        }
+    
+        /**
+         * Startet einen Polling-Loop fuer ein remoteToLocal-Profil. Pro Tick
+         * wird das Remote-Verzeichnis gelistet, mit dem letzten Stand
      * verglichen und neue/geaenderte Dateien werden heruntergeladen.
      */
     private startPollingLoop(profileName: string, profile: FtpSyncProfile): void {
@@ -420,6 +449,10 @@ export class FileWatcher {
         this.stats.isConnected = false;
 
         this.isRunning = false;
+        // startPromise-Cache loeschen, damit ein spaeteres start() wieder
+        // eine frische Initialisierung durchfuehrt (statt auf ein
+        // abgeschlossenes Promise aufzulaufen).
+        this.startPromise = undefined;
         Logger.info('File watcher stopped');
     }
 

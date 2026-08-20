@@ -504,6 +504,23 @@ export class CommandHandler {
      * laeuft, teilen sich alle nachfolgenden Aufrufer dasselbe Promise. Erst
      * nach Abschluss (oder Fehler) wird der Eintrag entfernt, sodass ein
      * Retry moeglich ist.
+     *
+     * WICHTIG: Vor v2.0.3 wurde hier NUR der FileWatcher-Konstruktor
+     * aufgerufen, NICHT `watcher.start()`. Wenn `getOrCreateWatcher` vor
+     * `autoStartUploadOnSaveWatchers` lief (z.B. weil der User direkt nach
+     * dem Workspace-Open Ctrl+S drueckte und `handleDocumentSave`
+     * ausgeloest hat, bevor der Auto-Start fertig war), wurde der Watcher
+     * zwar in `this.watchers` eingetragen — aber `start()` wurde nie
+     * aufgerufen. Folge: `autoStartUploadOnSaveWatchers` hat den Eintrag
+     * per `this.watchers.has(...)`-Check uebersprungen, der FileSystemWatcher
+     * wurde nie registriert, und KI-Agent-Writes (Cursor / Cline / git
+     * apply) wurden stillschweigend nicht hochgeladen. Manueller Upload
+     * (Ctrl+S) blieb funktional, weil `watcher.uploadFile(...)` unabhängig
+     * vom FileSystemWatcher arbeitet.
+     *
+     * Jetzt: `start()` wird hier explizit aufgerufen. Dank `startPromise`
+     * in `FileWatcher` ist es race-safe gegenueber dem parallel laufenden
+     * `autoStartUploadOnSaveWatchers`.
      */
     private async getOrCreateWatcher(workspacePath: string): Promise<FileWatcher> {
         const cached = this.watchers.get(workspacePath);
@@ -527,6 +544,20 @@ export class CommandHandler {
                         ? this.tombstoneStoreFactory(workspacePath, profileName)
                         : undefined
             });
+            // FileSystemWatcher + Polling-Loops starten, BEVOR der erste
+            // Aufrufer den Watcher benutzt. Ohne diesen Aufruf bleibt der
+            // Watcher ein totes Objekt, sobald ein spontanes Save-Event
+            // diese Methode vor `autoStartUploadOnSaveWatchers` erreicht.
+            // start() ist idempotent (startPromise-Cache in FileWatcher),
+            // ein paralleler Aufruf aus autoStartUploadOnSaveWatchers
+            // fuehrt zu keinem doppelten FileSystemWatcher.
+            //
+            // Reihenfolge: erst start(), dann in `this.watchers` eintragen.
+            // Wenn start() fehlschlaegt, darf der (unstarted) Watcher
+            // NICHT in der Map bleiben — sonst wuerde `autoStartUploadOnSaveWatchers`
+            // den Eintrag per `this.watchers.has(...)`-Check ueberspringen
+            // und der Watcher wuerde nie hochkommen.
+            await watcher.start();
             this.watchers.set(workspacePath, watcher);
             return watcher;
         })();
