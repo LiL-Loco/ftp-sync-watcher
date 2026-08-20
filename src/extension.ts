@@ -50,10 +50,49 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         commandHandler.registerCommands(context);
         context.subscriptions.push({ dispose: () => commandHandler.dispose() });
 
-        // Initialize FTP Explorer
-        // Eigener try/catch: ein Fehler beim TreeView-Aufbau oder bei der
-        // Registrierung der FTP-Explorer-Commands darf NICHT die bereits
-        // registrierten CommandHandler-Commands blockieren.
+        // Register FTP Explorer commands BEFORE the init try/catch.
+        // Die Commands muessen IMMER verfuegbar sein — auch wenn der TreeView-
+        // Aufbau oder `new FtpExplorerProvider(...)` scheitert. Sonst liefert
+        // ein Klick auf das "Not Connected"-Status-Item oder den Connect-Button
+        // im Explorer-Header `command 'ftpSync.connect' not found`. Die Handler
+        // pruefen `ftpExplorer` zur Laufzeit und zeigen sonst eine sichtbare
+        // Diagnose statt eines kryptischen Command-Fehlers.
+        context.subscriptions.push(
+            vscode.commands.registerCommand('ftpSync.connect', () => {
+                if (!ftpExplorer) {
+                    showErrorMessage('FTP Sync: FTP Explorer not initialized — check the output channel for details.');
+                    return;
+                }
+                return ftpExplorer.connect();
+            }),
+            vscode.commands.registerCommand('ftpSync.disconnect', () => {
+                if (!ftpExplorer) { return; }
+                return ftpExplorer.disconnect();
+            }),
+            vscode.commands.registerCommand('ftpSync.refreshExplorer', () => {
+                if (!ftpExplorer) { return; }
+                return ftpExplorer.refresh();
+            }),
+            vscode.commands.registerCommand('ftpSync.navigateUp', () => {
+                if (!ftpExplorer) { return; }
+                return ftpExplorer.navigateUp();
+            }),
+            vscode.commands.registerCommand('ftpSync.downloadRemoteFile', (item: FtpTreeItem) => {
+                if (!ftpExplorer) { return; }
+                return ftpExplorer.downloadItem(item);
+            }),
+            vscode.commands.registerCommand('ftpSync.deleteRemoteFile', (item: FtpTreeItem) => {
+                if (!ftpExplorer) { return; }
+                return ftpExplorer.deleteItem(item);
+            }),
+            vscode.commands.registerCommand('ftpSync.clearCredentials', () => clearStoredCredentials())
+        );
+        Logger.info('FTP Explorer commands registered');
+
+        // Initialize FTP Explorer (TreeView + Provider). Eigener try/catch:
+        // ein Fehler beim TreeView-Aufbau oder beim Provider-Konstruktor darf
+        // die bereits registrierten FTP-Explorer-Commands NICHT blockieren —
+        // sie liefern dann eine sichtbare Diagnose ueber `ftpExplorer`-Guard.
         try {
             ftpExplorer = new FtpExplorerProvider(configManager);
             const treeView = vscode.window.createTreeView('ftpExplorerView', {
@@ -63,18 +102,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             context.subscriptions.push(treeView);
             context.subscriptions.push({ dispose: () => ftpExplorer!.dispose() });
             Logger.info('FTP Explorer TreeView created');
-
-            // Register FTP Explorer commands
-            context.subscriptions.push(
-                vscode.commands.registerCommand('ftpSync.connect', () => ftpExplorer!.connect()),
-                vscode.commands.registerCommand('ftpSync.disconnect', () => ftpExplorer!.disconnect()),
-                vscode.commands.registerCommand('ftpSync.refreshExplorer', () => ftpExplorer!.refresh()),
-                vscode.commands.registerCommand('ftpSync.navigateUp', () => ftpExplorer!.navigateUp()),
-                vscode.commands.registerCommand('ftpSync.downloadRemoteFile', (item: FtpTreeItem) => ftpExplorer!.downloadItem(item)),
-                vscode.commands.registerCommand('ftpSync.deleteRemoteFile', (item: FtpTreeItem) => ftpExplorer!.deleteItem(item)),
-                vscode.commands.registerCommand('ftpSync.clearCredentials', () => clearStoredCredentials())
-            );
-            Logger.info('FTP Explorer commands registered');
         } catch (error) {
             Logger.error(
                 `FTP Explorer initialization failed: ${(error as Error).message}`,
@@ -82,6 +109,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             );
             showErrorMessage(`FTP Sync: FTP Explorer failed to initialize — ${(error as Error).message}`);
             // Wichtig: NICHT throw, sonst bricht die gesamte activate() ab.
+            // ftpExplorer bleibt undefined; die registrierten Commands liefern
+            // dann eine sichtbare Diagnose statt `command not found`.
         }
 
         // Setup upload on save handler

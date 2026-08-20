@@ -5,6 +5,12 @@ Alle wichtigen Änderungen an diesem Projekt werden in dieser Datei dokumentiert
 Das Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/),
 und dieses Projekt verwendet [Semantic Versioning](https://semver.org/lang/de/).
 
+## [2.0.4] - 2026-08-20
+
+### 🔧 Behoben
+
+- **`command 'ftpSync.connect' not found` bei FTP-Explorer-Init-Fehler**: Die sieben FTP-Explorer-Commands (`ftpSync.connect`, `ftpSync.disconnect`, `ftpSync.refreshExplorer`, `ftpSync.navigateUp`, `ftpSync.downloadRemoteFile`, `ftpSync.deleteRemoteFile`, `ftpSync.clearCredentials`) wurden in `src/extension.ts activate()` INNERHALB des FTP-Explorer-`try/catch`-Blocks registriert. Wenn `new FtpExplorerProvider(configManager)` oder `vscode.window.createTreeView('ftpExplorerView', ...)` fehlschlug, wurde KEIN einziger dieser Commands bei VS Code angemeldet. Folge: ein Klick auf das "Not Connected"-Status-Item (Wiring `command: 'ftpSync.connect'` in `src/ui/ftpExplorer.ts`) oder den Connect-Button im Explorer-Header lieferte `command 'ftpSync.connect' not found` statt einer Diagnose. Fix in `src/extension.ts`: die sieben `vscode.commands.registerCommand(...)`-Aufrufe sind jetzt VOR den Init-`try/catch` verschoben. Jeder Handler prueft `if (!ftpExplorer)` zur Laufzeit; `ftpSync.connect` zeigt dann `showErrorMessage('FTP Sync: FTP Explorer not initialized — check the output channel for details.')`, die uebrigen Commands antworten still mit `return`. Der Init-`try/catch` umfasst jetzt nur noch Provider-Konstruktor + `createTreeView` — `ftpExplorer` bleibt bei Fehlschlag `undefined`, die registrierten Commands liefern aber eine sichtbare Diagnose. Die v2.0.2-Aenderung schuetzte bereits die `CommandHandler`-Commands vor diesem Regression; v2.0.4 schliesst die FTP-Explorer-Commands mit derselben Begruendung nach.
+
 ## [2.0.3] - 2026-08-20
 
 ### � Behoben
