@@ -78,3 +78,32 @@ node_modules/**
 # --- cpu-features (vorkompilierte .node-Binary) ---
 !node_modules/cpu-features/package.json
 !node_modules/cpu-features/lib/index.js
+
+# --- ssh2 transitive deps (pure-JS, required at module load) ---
+# ssh2/lib/protocol/keyParser.js:20-21 requires `asn1` und `bcrypt-pbkdf`
+# beim Modul-Load. Da ssh2 extern ist (native cpu-features), kann esbuild
+# diese transitiven JS-Deps nicht selbst buendeln — sie muessen als
+# Runtime-Files mitgeliefert werden. Ohne diese Eintraege scheitert die
+# Extension-Aktivierung mit "Cannot find module 'asn1'" o.ae.
+
+# asn1 (ssh2 -> asn1@^0.2.6)
+!node_modules/asn1/package.json
+!node_modules/asn1/lib/index.js
+!node_modules/asn1/lib/ber/errors.js
+!node_modules/asn1/lib/ber/index.js
+!node_modules/asn1/lib/ber/reader.js
+!node_modules/asn1/lib/ber/types.js
+!node_modules/asn1/lib/ber/writer.js
+
+# bcrypt-pbkdf (ssh2 -> bcrypt-pbkdf@^1.0.2)
+!node_modules/bcrypt-pbkdf/package.json
+!node_modules/bcrypt-pbkdf/index.js
+
+# safer-buffer (asn1 -> safer-buffer@~2.1.0)
+!node_modules/safer-buffer/package.json
+!node_modules/safer-buffer/safer.js
+!node_modules/safer-buffer/dangerous.js
+
+# tweetnacl (bcrypt-pbkdf -> tweetnacl@^0.14.3)
+!node_modules/tweetnacl/package.json
+!node_modules/tweetnacl/nacl-fast.js
