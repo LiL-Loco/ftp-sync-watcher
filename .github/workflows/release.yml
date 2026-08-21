@@ -1,0 +1,55 @@
+name: Publish to VS Marketplace
+
+# Triggert auf Tag-Push (v*) fuer automatisches Release. Alternativ
+# `workflow_dispatch` fuer manuelle Builds. Sicherheits-PAT liegt im
+# Repo-Secret `VSCE_PAT`.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch: {}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm run test:unit
+
+      - name: Build VSIX
+        run: npm run package
+
+      # `vsce publish` liest die Version aus package.json und publisht
+      # auf den VS Marketplace unter dem Publisher-Namen aus
+      # package.json (`ThaLoco0ne`). Token liegt im Secret `VSCE_PAT`.
+      - name: Publish to VS Marketplace
+        run: npx vsce publish -p $VSCE_PAT
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+
+      # GitHub Release nur bei Tag-Push erstellen (workflow_dispatch hat
+      # keinen Tag). `softprops/action-gh-release` haengt die .vsix aus
+      # dem Repo-Root als Release-Asset an und generiert die Notes aus
+      # den Commits seit dem letzten Tag.
+      - name: Upload VSIX to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ftp-sync-watcher-*.vsix
+          generate_release_notes: true
