@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { ConfigManager, SecretManager, TombstoneStore } from './core';
 import { CommandHandler } from './commands';
-import { StatusBar, FtpExplorerProvider, FtpTreeItem } from './ui';
+import { StatusBar, FtpExplorerProvider, FtpTreeItem, FtpExplorerDragAndDropController } from './ui';
 import { Logger, showErrorMessage } from './utils';
 
 let configManager: ConfigManager;
@@ -85,6 +86,42 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                 if (!ftpExplorer) { return; }
                 return ftpExplorer.deleteItem(item);
             }),
+            vscode.commands.registerCommand('ftpSync.copyRemotePath', (item: FtpTreeItem) => {
+                if (!ftpExplorer) { return; }
+                return ftpExplorer.copyRemotePath(item);
+            }),
+            vscode.commands.registerCommand('ftpSync.renameRemoteFile', (item: FtpTreeItem) => {
+                if (!ftpExplorer) { return; }
+                return ftpExplorer.moveRemoteFile(item);
+            }),
+            vscode.commands.registerCommand('ftpSync.extractRemoteArchive', (item: FtpTreeItem) => {
+                if (!ftpExplorer) { return; }
+                return ftpExplorer.extractRemoteArchive(item);
+            }),
+            vscode.commands.registerCommand('ftpSync.extractRemoteArchiveTo', async (item: FtpTreeItem) => {
+                if (!ftpExplorer) { return; }
+                // InputBox mit Pfad-Vorschlag (Parent-Dir des Archivs). User
+                // kann den Pfad anpassen oder abbrechen.
+                const parentDir = path.posix.dirname(item.remotePath);
+                const input = await vscode.window.showInputBox({
+                    prompt: `Extract "${item.label}" to which remote directory?`,
+                    value: parentDir,
+                    placeHolder: '/remote/path/to/target',
+                    validateInput: (value: string) => {
+                        if (!value) {
+                            return 'Path is required';
+                        }
+                        if (!value.startsWith('/')) {
+                            return 'Path must be absolute (start with /)';
+                        }
+                        return null;
+                    }
+                });
+                if (!input) {
+                    return;
+                }
+                return ftpExplorer.extractRemoteArchive(item, input);
+            }),
             vscode.commands.registerCommand('ftpSync.clearCredentials', () => clearStoredCredentials())
         );
         Logger.info('FTP Explorer commands registered');
@@ -95,9 +132,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         // sie liefern dann eine sichtbare Diagnose ueber `ftpExplorer`-Guard.
         try {
             ftpExplorer = new FtpExplorerProvider(configManager);
+            const dragAndDropController = new FtpExplorerDragAndDropController(ftpExplorer);
             const treeView = vscode.window.createTreeView('ftpExplorerView', {
                 treeDataProvider: ftpExplorer,
-                showCollapseAll: true
+                showCollapseAll: true,
+                dragAndDropController
             });
             context.subscriptions.push(treeView);
             context.subscriptions.push({ dispose: () => ftpExplorer!.dispose() });

@@ -24,35 +24,35 @@
 </p>
 
 <p align="center">
-  <a href="#-features">Features</a> •
-  <a href="#-installation">Installation</a> •
-  <a href="#%EF%B8%8F-configuration">Configuration</a> •
-  <a href="#-commands">Commands</a> •
-  <a href="#-troubleshooting">Troubleshooting</a>
+  <a href="#features">Features</a> •
+  <a href="#installation">Installation</a> •
+  <a href="#configuration">Configuration</a> •
+  <a href="#commands">Commands</a> •
+  <a href="#troubleshooting">Troubleshooting</a>
 </p>
 
 ---
 
-## ✨ Features
+## Features
 
 | Feature                       | Description                                                 |
 | ----------------------------- | ----------------------------------------------------------- |
-| 🔄 **Upload on Save**         | Automatically upload files when you save them               |
-| 👁️ **File Watcher**           | Monitor file changes and sync automatically in real-time    |
-| 🌳 **Remote Explorer**        | Browse and manage remote files directly in VS Code          |
-| 🗑️ **Auto-Delete**            | Optionally delete remote files when local files are deleted |
-| 📁 **.gitignore Support**     | Automatically respects your `.gitignore` rules              |
-| 🚫 **Custom Ignore Patterns** | Exclude files and folders with powerful glob patterns       |
-| 🔐 **SSH Key Authentication** | Secure SFTP connections with private key support            |
-| 🔒 **FTPS / TLS Support**     | Secure FTP connections with certificate and TLS options     |
-| 📊 **Status Bar Integration** | Real-time sync status at a glance                           |
-| ⚡ **Smart Reconnection**     | Automatic reconnection with exponential backoff             |
-| 🔁 **Operation Queue**        | Prevents hanging uploads with timeout and retry mechanisms  |
-| 🛡️ **Connection Pooling**     | Intelligent connection management to avoid server limits    |
+| **Upload on Save**            | Automatically upload files when you save them               |
+| **File Watcher**              | Monitor file changes and sync automatically in real-time    |
+| **Remote Explorer**           | Browse and manage remote files directly in VS Code          |
+| **Auto-Delete**               | Optionally delete remote files when local files are deleted |
+| **.gitignore Support**        | Automatically respects your `.gitignore` rules              |
+| **Custom Ignore Patterns**    | Exclude files and folders with powerful glob patterns       |
+| **SSH Key Authentication**    | Secure SFTP connections with private key support            |
+| **FTPS / TLS Support**        | Secure FTP connections with certificate and TLS options     |
+| **Status Bar Integration**    | Real-time sync status at a glance                           |
+| **Smart Reconnection**        | Automatic reconnection with exponential backoff             |
+| **Operation Queue**           | Prevents hanging uploads with timeout and retry mechanisms  |
+| **Connection Pooling**        | Intelligent connection management to avoid server limits    |
 
 ---
 
-## 🚀 Why This Extension?
+## Why This Extension?
 
 Other FTP/SFTP extensions often **stop working** after a while and fail to upload files silently. This extension solves that with:
 
@@ -60,7 +60,7 @@ Other FTP/SFTP extensions often **stop working** after a while and fail to uploa
 <tr>
 <td width="50%">
 
-### 🔧 Robust Architecture
+### Robust Architecture
 
 - **Automatic Reconnection** with exponential backoff (up to 5 retries)
 - **Operation Timeout** — no more hanging uploads
@@ -70,7 +70,7 @@ Other FTP/SFTP extensions often **stop working** after a while and fail to uploa
 </td>
 <td width="50%">
 
-### ⚡ Smart Queue System
+### Smart Queue System
 
 - **Non-blocking Queue** — uploads are processed in sequence
 - **Retry Mechanism** — failed uploads are retried automatically
@@ -83,7 +83,7 @@ Other FTP/SFTP extensions often **stop working** after a while and fail to uploa
 
 ---
 
-## 📦 Installation
+## Installation
 
 ### From VS Code Marketplace (Recommended)
 
@@ -99,7 +99,7 @@ Other FTP/SFTP extensions often **stop working** after a while and fail to uploa
 
 ---
 
-## ⚙️ Configuration
+## Configuration
 
 Create a `.ftpsync.json` file in your `.vscode` folder. The extension will guide you through this process.
 
@@ -192,7 +192,7 @@ Press `Ctrl+Shift+P` → `FTP Sync: Create Configuration File`
 ### Configuration Reference
 
 <details>
-<summary><strong>📋 Click to expand full configuration options</strong></summary>
+<summary><strong>Click to expand full configuration options</strong></summary>
 
 | Option               | Type                | Default              | Description                              |
 | -------------------- | ------------------- | -------------------- | ---------------------------------------- |
@@ -231,7 +231,7 @@ Press `Ctrl+Shift+P` → `FTP Sync: Create Configuration File`
 
 ---
 
-## 🎮 Commands
+## Commands
 
 Access all commands via the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`):
 
@@ -250,7 +250,7 @@ Access all commands via the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`):
 
 ---
 
-## 📂 Remote Explorer
+## Remote Explorer
 
 Browse and manage your remote files directly in VS Code:
 
@@ -260,10 +260,10 @@ Browse and manage your remote files directly in VS Code:
 
 ### Features
 
-- 🌳 **Tree View** — Navigate your remote file structure
-- 📥 **Download** — Download files with one click
-- 🗑️ **Delete** — Remove remote files
-- 🔄 **Refresh** — Update the file list
+- **Tree View** — Navigate your remote file structure
+- **Download** — Download files with one click
+- **Delete** — Remove remote files
+- **Refresh** — Update the file list
 
 </td>
 <td>
@@ -280,20 +280,20 @@ Browse and manage your remote files directly in VS Code:
 
 ---
 
-## 📊 Status Bar
+## Status Bar
 
 The status bar shows the current state:
 
-| Icon | Status         | Description                               |
-| ---- | -------------- | ----------------------------------------- |
-| ☁️   | **FTP Sync**   | Watcher inactive — click to start         |
-| 👁️   | **Watching**   | Watcher active — click to stop            |
-| 🔄   | **Syncing...** | Upload in progress                        |
-| ❌   | **Error**      | Error occurred — check output for details |
+| Status         | Description                               |
+| -------------- | ----------------------------------------- |
+| **FTP Sync**   | Watcher inactive — click to start         |
+| **Watching**   | Watcher active — click to stop            |
+| **Syncing...** | Upload in progress                        |
+| **Error**      | Error occurred — check output for details |
 
 ---
 
-## 🎯 Glob Patterns
+## Glob Patterns
 
 ### Ignore Patterns
 
@@ -334,9 +334,9 @@ The status bar shows the current state:
 
 ---
 
-## 🔒 Security Best Practices
+## Security Best Practices
 
-> ⚠️ **Important Security Recommendations**
+> **Important Security Recommendations**
 
 1. **Use SSH Keys** — Prefer `privateKeyPath` over `password` for SFTP
 2. **Use `rejectUnauthorized: true`** — Only disable certificate validation for self-signed FTPS servers you explicitly trust
@@ -348,10 +348,10 @@ The status bar shows the current state:
 
 ---
 
-## 🔧 Troubleshooting
+## Troubleshooting
 
 <details>
-<summary><strong>🔌 Connection Issues</strong></summary>
+<summary><strong>Connection Issues</strong></summary>
 
 1. Verify host, port, and credentials
 2. Ensure the server is reachable
@@ -363,7 +363,7 @@ The status bar shows the current state:
 </details>
 
 <details>
-<summary><strong>📤 Files Not Uploading</strong></summary>
+<summary><strong>Files Not Uploading</strong></summary>
 
 1. Check the `ignore` patterns
 2. Ensure `uploadOnSave` is enabled
@@ -373,7 +373,7 @@ The status bar shows the current state:
 </details>
 
 <details>
-<summary><strong>🔐 SSH Key Issues</strong></summary>
+<summary><strong>SSH Key Issues</strong></summary>
 
 1. Ensure the key is in OpenSSH format
 2. Check file permissions of the private key
@@ -383,7 +383,7 @@ The status bar shows the current state:
 </details>
 
 <details>
-<summary><strong>⚠️ Max Connections Error (530)</strong></summary>
+<summary><strong>Max Connections Error (530)</strong></summary>
 
 This extension handles this automatically by:
 
@@ -397,9 +397,9 @@ If you still see this error, wait a few minutes for old connections to close.
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
-Contributions are welcome! Please feel free to submit a [Pull Request](https://github.com/LiL-Loco/ftp-sync-watcher/pulls).
+Contributions are welcome. Please feel free to submit a [Pull Request](https://github.com/LiL-Loco/ftp-sync-watcher/pulls).
 
 ### Found a Bug?
 
@@ -412,14 +412,14 @@ Please [open an issue](https://github.com/LiL-Loco/ftp-sync-watcher/issues/new) 
 
 ---
 
-## 📄 License
+## License
 
 This project is licensed under the [MIT License](LICENSE).
 
 ---
 
 <p align="center">
-  Made with ❤️ by <a href="https://github.com/LiL-Loco">LiL-Loco</a>
+  Made by <a href="https://github.com/LiL-Loco">LiL-Loco</a>
 </p>
 
 <p align="center">

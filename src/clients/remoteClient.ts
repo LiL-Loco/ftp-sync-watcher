@@ -80,6 +80,13 @@ export abstract class RemoteClient {
     abstract ensureDirectory(remotePath: string): Promise<void>;
 
     /**
+     * Rename/move a file or directory on the remote server. Atomic on both
+     * FTP (RNFR + RNTO) and SFTP. Behaviour for an existing target at
+     * `newPath` is server-specific (most servers overwrite, some reject).
+     */
+    abstract rename(oldPath: string, newPath: string): Promise<void>;
+
+    /**
      * List files in a remote directory
      */
     abstract listDirectory(remotePath: string): Promise<RemoteFileInfo[]>;

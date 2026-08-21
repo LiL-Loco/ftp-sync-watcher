@@ -231,11 +231,25 @@ export class FtpClient extends RemoteClient {
 
     async ensureDirectory(remotePath: string): Promise<void> {
         const normalizedRemotePath = normalizePath(remotePath);
-        
+
         try {
             await this.client.ensureDir(normalizedRemotePath);
         } catch (error) {
             Logger.error(`Failed to ensure directory ${remotePath}: ${(error as Error).message}`);
+            throw error;
+        }
+    }
+
+    async rename(oldPath: string, newPath: string): Promise<void> {
+        const from = normalizePath(oldPath);
+        const to = normalizePath(newPath);
+
+        try {
+            Logger.debug(`Renaming remote: ${from} -> ${to}`);
+            await this.client.rename(from, to);
+            Logger.success(`Renamed: ${path.basename(from)} -> ${path.basename(to)}`);
+        } catch (error) {
+            Logger.error(`Failed to rename ${from} to ${to}: ${(error as Error).message}`);
             throw error;
         }
     }
